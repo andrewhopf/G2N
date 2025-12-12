@@ -1,0 +1,59 @@
+{
+  "timeZone": "Africa/Johannesburg",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.storage",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+    "https://www.googleapis.com/auth/script.locale"
+  ],
+  "urlFetchWhitelist": [
+    "https://api.notion.com/",
+    "https://api.notion.com/*",
+    "https://www.notion.so/",
+    "https://www.notion.so/*",
+    "https://gmail.googleapis.com/",
+    "https://gmail.googleapis.com/*",
+    "https://www.googleapis.com/",
+    "https://www.googleapis.com/*",
+    "https://script.google.com/",
+    "https://script.google.com/*"
+  ],
+  "addOns": {
+    "common": {
+      "name": "G2N",
+      "logoUrl": "https://i.imgur.com/hT1FTRP.png",
+      "useLocaleFromApp": true,
+      "homepageTrigger": {
+        "runFunction": "onG2NHomepage"
+      },
+      "layoutProperties": {
+        "primaryColor": "#4285F4",
+        "secondaryColor": "#FFFFFF"
+      },
+      "openLinkUrlPrefixes": [
+        "https://www.notion.so/",
+        "https://api.notion.com/"
+      ],
+      "universalActions": [
+        {
+          "label": "Save to Notion",
+          "runFunction": "onUniversalAction"
+        }
+      ]
+    },
+    "gmail": {
+      "contextualTriggers": [
+        {
+          "unconditional": {},
+          "onTriggerFunction": "onG2NGmailMessage"
+        }
+      ]
+    }
+  }
+}
