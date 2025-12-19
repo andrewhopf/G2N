@@ -311,91 +311,217 @@ function buildHomepageCard() {
   return cardBuilder.build();
 }
 
+/**
+ * Build email preview card with database info and email body preview
+ * Enhanced version with better styling
+ */
 function buildEmailPreviewCard(e) {
-  console.log("Building email preview card");
+  console.log("Building enhanced email preview card");
   
-  const config = getConfig();
-  const hasAPIKey = !!config.apiKey;
-  const hasDatabase = !!config.databaseId && hasAPIKey;
-  const hasMappings = hasDatabase; // Assume mappings are configured if we have database
+  var config = getConfig();
+  var hasApiKey = !!config.apiKey;
+  var hasDatabase = !!config.databaseId && hasApiKey;
+  var hasMappings = config.hasMappings && hasDatabase;
   
   let emailSubject = "No email found";
-  let emailFrom = "Unknown";
-  let messageId = e?.gmail?.messageId;
+  let emailFrom = "Unknown Sender";
+  let emailBodyPreview = "No email content available";
+  let emailDate = "Unknown date";
+  let emailMessageId = e?.gmail?.messageId;
   
   try {
-    if (messageId) {
-      const message = GmailApp.getMessageById(messageId);
-      if (message) {
-        emailSubject = message.getSubject() || "No Subject";
-        emailFrom = message.getFrom() || "Unknown Sender";
+    if (emailMessageId) {
+      var email = GmailApp.getMessageById(emailMessageId);
+      if (email) {
+        emailSubject = email.getSubject() || "No Subject";
+        emailFrom = email.getFrom() || "Unknown Sender";
+        emailDate = email.getDate() ? email.getDate().toLocaleString() : "Unknown date";
+        
+        // Get email body preview (first 250 chars)
+        var plainBody = email.getPlainBody() || "";
+        if (plainBody) {
+          // Clean up the text
+          emailBodyPreview = plainBody
+            .replace(/\n/g, ' ')           // Replace newlines with spaces
+            .replace(/\s+/g, ' ')          // Collapse multiple spaces
+            .substring(0, 250)
+            .trim();
+          
+          if (plainBody.replace(/\s+/g, ' ').length > 250) {
+            emailBodyPreview += "…";
+          }
+        }
       }
     } else {
+      // Preview mode (no actual email selected)
       emailSubject = e?.gmail?.subject || "No Subject";
       emailFrom = e?.gmail?.from || "Unknown Sender";
-      messageId = "preview-mode";
+      emailDate = "Preview mode";
+      emailMessageId = "preview-mode";
     }
-  } catch (error) {
-    console.warn("Could not get email:", error);
+  } catch (e) {
+    console.warn("Could not get email details:", e);
   }
   
-  const cardBuilder = CardService.newCardBuilder()
+  var cardBuilder = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
       .setTitle("📨 Email Preview")
-      .setSubtitle("Ready to save to Notion"))
-    .addSection(CardService.newCardSection()
-      .addWidget(CardService.newKeyValue()
-        .setTopLabel("Subject")
-        .setContent(emailSubject))
-      .addWidget(CardService.newKeyValue()
-        .setTopLabel("From")
-        .setContent(emailFrom)));
+      .setSubtitle("Ready to save to Notion"));
   
-  if (!messageId || messageId === "preview-mode") {
-    // No email selected
-    cardBuilder.addSection(CardService.newCardSection()
-      .setHeader("⚠️ No Email Selected")
+  // ============================================
+  // STATUS BADGE SECTION (Top - Quick Status)
+  // ============================================
+  var statusBadge = "";
+  if (hasApiKey && hasDatabase && hasMappings) {
+    statusBadge = "🟢 READY TO SAVE";
+  } else if (hasApiKey && hasDatabase) {
+    statusBadge = "🟡 NEEDS MAPPINGS";
+  } else if (hasApiKey) {
+    statusBadge = "🟠 NEEDS DATABASE";
+  } else {
+    statusBadge = "🔴 SETUP REQUIRED";
+  }
+  
+  cardBuilder.addSection(CardService.newCardSection()
+    .addWidget(CardService.newTextParagraph()
+      .setText(`<b>${statusBadge}</b>`)));
+  
+  // ============================================
+  // DATABASE INFO SECTION
+  // ============================================
+  var dbInfoSection = CardService.newCardSection()
+    .setHeader("🗄️ Notion Database");
+  
+  if (hasDatabase) {
+    var dbName = config.databaseName || "Unnamed Database";
+    var dbIdShort = config.databaseId.substring(0, 8) + "...";
+    
+    dbInfoSection
+      .addWidget(CardService.newKeyValue()
+        .setTopLabel("Connected to")
+        .setContent(`<b>${dbName}</b>`)
+        .setMultiline(true))
       .addWidget(CardService.newTextParagraph()
-        .setText("Open this add-on from an email to preview it."))
-      .addWidget(CardService.newButtonSet()
-        .addButton(CardService.newTextButton()
-          .setText("🏠 Back to Home")
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName("onG2NHomepage")))));
-  } else if (hasAPIKey && hasDatabase && hasMappings) {
-    // Fully configured with email selected
-    cardBuilder.addSection(CardService.newCardSection()
-      .setHeader("💾 Save to Notion")
-      .addWidget(CardService.newButtonSet()
-        .addButton(CardService.newTextButton()
-          .setText("💾 Save Email")
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName("quickG2NSaveEmail")))))
-      .addSection(CardService.newCardSection()
-        .setHeader("⚙️ Configuration")
+        .setText(`<font color="#5F6368"><i>ID: ${dbIdShort}</i></font>`));
+  } else {
+    dbInfoSection
+      .addWidget(CardService.newTextParagraph()
+        .setText("<font color='#FF6B6B'>No database selected</font>"))
+      .addWidget(CardService.newTextParagraph()
+        .setText("Please select a database in Settings"));
+  }
+  
+  cardBuilder.addSection(dbInfoSection);
+  
+  // ============================================
+  // EMAIL PREVIEW SECTION
+  // ============================================
+  var emailSection = CardService.newCardSection()
+    .setHeader("📧 Email Preview");
+  
+  emailSection
+    .addWidget(CardService.newKeyValue()
+      .setTopLabel("📝 Subject")
+      .setContent(emailSubject)
+      .setMultiline(true))
+    .addWidget(CardService.newKeyValue()
+      .setTopLabel("👤 From")
+      .setContent(emailFrom)
+      .setMultiline(true))
+    .addWidget(CardService.newKeyValue()
+      .setTopLabel("📅 Date")
+      .setContent(emailDate)
+      .setMultiline(true));
+  
+  // Body preview with better formatting
+  if (emailBodyPreview && emailBodyPreview !== "No email content available") {
+    emailSection.addWidget(CardService.newDivider());
+    
+    emailSection.addWidget(CardService.newTextParagraph()
+      .setText("<b>📄 Body Preview:</b>"));
+    
+    // Create a text paragraph with limited height and scrollable if needed
+    emailSection.addWidget(CardService.newTextParagraph()
+      .setText(`<div style="max-height: 100px; overflow-y: auto; padding: 8px; background-color: #f8f9fa; border-radius: 4px; font-size: 0.9em;">${escapeHtml(emailBodyPreview)}</div>`));
+  }
+  
+  cardBuilder.addSection(emailSection);
+  
+  // ============================================
+  // ACTIONS SECTION
+  // ============================================
+  if (emailMessageId && emailMessageId !== "preview-mode") {
+    if (hasApiKey && hasDatabase && hasMappings) {
+      // FULLY CONFIGURED - Show save button prominently
+      cardBuilder.addSection(CardService.newCardSection()
+        .setHeader("🚀 Ready to Save")
+        .addWidget(CardService.newTextParagraph()
+          .setText("This email will be saved to:"))
+        .addWidget(CardService.newTextParagraph()
+          .setText(`<b>📁 ${config.databaseName}</b>`))
         .addWidget(CardService.newButtonSet()
           .addButton(CardService.newTextButton()
-            .setText("🔄 Change Mappings")
+            .setText("💾 Save to Notion")
+            .setBackgroundColor("#0F9D58")
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName("quickG2NSaveEmail")))));
+      
+      // Additional options
+      cardBuilder.addSection(CardService.newCardSection()
+        .addWidget(CardService.newButtonSet()
+          .addButton(CardService.newTextButton()
+            .setText("⚙️ Edit Mappings")
             .setOnClickAction(CardService.newAction()
               .setFunctionName("showMappingsConfiguration")))
           .addButton(CardService.newTextButton()
-            .setText("⚙️ Settings")
+            .setText("🔄 Change Database")
             .setOnClickAction(CardService.newAction()
-              .setFunctionName("showG2NSettings")))));
-  } else {
-    // Not fully configured
-    cardBuilder.addSection(CardService.newCardSection()
-      .setHeader("⚠️ Setup Required")
-      .addWidget(CardService.newTextParagraph()
-        .setText("Please complete setup before saving emails:"))
-      .addWidget(CardService.newButtonSet()
-        .addButton(CardService.newTextButton()
-          .setText("⚙️ Continue Setup")
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName("onG2NHomepage")))));
+              .setFunctionName("showDatabaseSelection")))));
+      
+    } else {
+      // SETUP REQUIRED - Show what's missing
+      var missingItems = [];
+      if (!hasApiKey) missingItems.push("API Key");
+      if (!hasDatabase) missingItems.push("Database");
+      if (!hasMappings) missingItems.push("Field Mappings");
+      
+      cardBuilder.addSection(CardService.newCardSection()
+        .setHeader("🔧 Setup Required")
+        .addWidget(CardService.newTextParagraph()
+          .setText("<b>Missing:</b> " + missingItems.join(", ")))
+        .addWidget(CardService.newButtonSet()
+          .addButton(CardService.newTextButton()
+            .setText("⚙️ Complete Setup")
+            .setBackgroundColor("#4285F4")
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName("onG2NHomepage")))));
+    }
   }
-    
+  
+  // Always show home button
+  cardBuilder.addSection(CardService.newCardSection()
+    .addWidget(CardService.newButtonSet()
+      .addButton(CardService.newTextButton()
+        .setText("🏠 Home")
+        .setOnClickAction(CardService.newAction()
+          .setFunctionName("onG2NHomepage")))));
+  
   return cardBuilder.build();
+}
+
+/**
+ * Helper function to escape HTML for safe display
+ */
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function buildSettingsCard() {

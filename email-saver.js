@@ -225,28 +225,9 @@ function createEmailInfoBlocks(emailData) {
     });
   }
   
-  // Add Gmail link
-  if (emailData.gmailLinkUrl) {
-    blocks.push({
-      object: 'block',
-      type: 'divider',
-      divider: {}
-    });
-    
-    blocks.push({
-      object: 'block',
-      type: 'paragraph',
-      paragraph: {
-        rich_text: [{
-          type: 'text',
-          text: { 
-            content: '🔗 Open in Gmail',
-            link: { url: emailData.gmailLinkUrl }
-          }
-        }]
-      }
-    });
-  }
+  // ⚠️ REMOVED: Gmail link section (it's already saved as a URL property in the database)
+  // The Gmail link will appear in the "Gmail link" URL property column instead
+  // This prevents duplication
   
   return blocks;
 }
