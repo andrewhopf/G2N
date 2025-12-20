@@ -1,10 +1,14 @@
-// notion-fetcher.js
-// ============================================
-// NOTION API FUNCTIONS
-// ============================================
+/**
+ * @fileoverview Notion API integration functions
+ * @version 2.0.0
+ * @description Handles fetching database schemas, properties, and workspace users
+ */
 
 /**
- * Fetches database schema from Notion API
+ * Fetch database schema from Notion API
+ * @param {string} databaseId - Notion database ID
+ * @param {string} apiKey - Notion API key
+ * @returns {Object} Response object with success status and data
  */
 function fetchNotionDatabaseSchema(databaseId, apiKey) {
   if (!databaseId || !apiKey) {
@@ -13,31 +17,34 @@ function fetchNotionDatabaseSchema(databaseId, apiKey) {
   
   try {
     const url = `https://api.notion.com/v1/databases/${databaseId}`;
-    
     const options = {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Notion-Version': '2022-06-28',
-        'Content-Type': 'application/json'
+        "Authorization": `Bearer ${apiKey}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
       },
       muteHttpExceptions: true
     };
     
     const response = UrlFetchApp.fetch(url, options);
-    const result = JSON.parse(response.getContentText());
+    const statusCode = response.getResponseCode();
+    const responseText = response.getContentText();
     
-    if (response.getResponseCode() !== 200) {
-      throw new Error(result.message || "Failed to fetch database");
+    if (statusCode !== 200) {
+      const errorData = JSON.parse(responseText);
+      throw new Error(errorData.message || "Failed to fetch database");
     }
+    
+    const data = JSON.parse(responseText);
     
     return {
       success: true,
       database: {
-        id: result.id,
-        title: result.title[0]?.plain_text || "Untitled",
-        properties: processDatabaseProperties(result.properties),
-        url: result.url
+        id: data.id,
+        title: data.title[0]?.plain_text || "Untitled",
+        properties: processDatabaseProperties(data.properties),
+        url: data.url
       }
     };
     
@@ -52,121 +59,119 @@ function fetchNotionDatabaseSchema(databaseId, apiKey) {
 }
 
 /**
- * Fetch Notion workspace users for people properties
- * @returns {Array} List of Notion users
+ * Fetch Notion workspace users
+ * @returns {Array<{id: string, name: string, email: string}>} Array of Notion users
  */
 function fetchNotionWorkspaceUsers() {
   try {
-    var config = getConfig();
-    if (!config.apiKey) return [];
+    const config = getConfig();
     
-    var options = {
+    if (!config.apiKey) {
+      return [];
+    }
+    
+    const options = {
       method: "GET",
       headers: {
-        "Authorization": "Bearer " + config.apiKey,
+        "Authorization": `Bearer ${config.apiKey}`,
         "Notion-Version": "2022-06-28"
       },
       muteHttpExceptions: true
     };
     
-    var response = UrlFetchApp.fetch("https://api.notion.com/v1/users", options);
-    var data = JSON.parse(response.getContentText());
+    const response = UrlFetchApp.fetch("https://api.notion.com/v1/users", options);
     
     if (response.getResponseCode() === 200) {
-      return data.results
-        .filter(user => user.type === "person") // Only real users, not bots
+      const data = JSON.parse(response.getContentText());
+      
+      return (data.results || [])
+        .filter(user => user.type === "person")
         .map(user => ({
           id: user.id,
           name: user.name || "Unknown User",
           email: user.person?.email || ""
         }));
     }
-  } catch (e) {
-    console.error("Error fetching Notion users:", e);
+    
+  } catch (error) {
+    console.error("Error fetching Notion users:", error);
   }
   
   return [];
 }
 
-// ============================================
-// PROPERTY PROCESSING FUNCTIONS
-// ============================================
-
 /**
  * Process raw Notion API properties into usable format
+ * @param {Object} properties - Raw properties from Notion API
+ * @returns {Array} Processed properties array
  */
 function processDatabaseProperties(properties) {
   console.log("=== DEBUG: Processing database properties ===");
-  const result = [];
   
-  for (const [name, prop] of Object.entries(properties)) {
-    // Use the new isPropertyMappable function
-    const isMappable = isPropertyMappable(prop.type);
+  const processedProperties = [];
+  
+  for (const [name, propertyData] of Object.entries(properties)) {
+    const isMappable = isPropertyMappable(propertyData.type);
     
-    console.log(`Property: ${name} (${prop.type}) - Mappable: ${isMappable}`);
+    console.log(`Property: ${name} (${propertyData.type}) - Mappable: ${isMappable}`);
     
-    result.push({
-      id: prop.id,
+    processedProperties.push({
+      id: propertyData.id,
       name: name,
-      type: prop.type,
-      isTitle: "title" === prop.type,
-      isRequired: "Name" === name || "title" === prop.type,
-      supportedForMapping: isMappable, // Using the correct function
-      config: prop[prop.type] || {}
+      type: propertyData.type,
+      isTitle: propertyData.type === "title",
+      isRequired: name === "Name" || propertyData.type === "title",
+      supportedForMapping: isMappable,
+      config: propertyData[propertyData.type] || {}
     });
   }
   
-  return result;
+  return processedProperties;
 }
-
-// REMOVED: Both duplicate isSupportedForMapping functions
-// They were causing conflicts and incorrect filtering
 
 /**
  * Check if a Notion property type is mappable from email data
- * CORRECTED: Properly categorizes all property types
  * @param {string} propertyType - The Notion property type
  * @returns {boolean} True if property can be mapped
  */
 function isPropertyMappable(propertyType) {
-  // These property types CANNOT be mapped at all (Notion manages them)
-  const unmappableTypes = [
-    "formula",          // Calculated by Notion
-    "rollup",           // Aggregated from relations
-    "created_time",     // Auto-set by Notion
-    "created_by",       // Auto-set by Notion
+  // Auto-managed properties that should NOT be mappable
+  const autoManagedTypes = [
+    "formula",      // Calculated by Notion
+    "rollup",       // Aggregated from relations
+    "created_time", // Auto-set by Notion
+    "created_by",   // Auto-set by Notion
     "last_edited_time", // Auto-set by Notion
     "last_edited_by",   // Auto-set by Notion
-    "people"            // NOTION USERS - not mappable from email!
+    "people"        // Special handling required
   ];
   
-  // All other types are mappable in some way
-  return !unmappableTypes.includes(propertyType);
+  return !autoManagedTypes.includes(propertyType);
 }
 
 /**
  * Check if property should show Gmail field mapping UI
- * Some properties (like select, checkbox, relation, people) use static values instead
  * @param {string} propertyType - The Notion property type
  * @returns {boolean} True if property maps to Gmail fields
  */
 function shouldShowGmailFieldMapping(propertyType) {
-  // These property types use STATIC VALUES, not Gmail field mapping
-  const staticValueTypes = [
+  // Properties that use static values instead of Gmail fields
+  const staticValueProperties = [
     "relation",      // Links to other database (static selection)
     "checkbox",      // True/false value (static)
     "select",        // Predefined option (static)
     "status",        // Predefined status (static)
     "multi_select",  // Multiple predefined options (static)
-    "people"         // NOTION USERS - select from workspace members
+    "people"         // Notion workspace users
   ];
   
-  // Return true for properties that DO map to Gmail fields
-  return !staticValueTypes.includes(propertyType);
+  return !staticValueProperties.includes(propertyType);
 }
 
 /**
- * Get transformation options for property type
+ * Get transformation options for a property type
+ * @param {string} propertyType - Notion property type
+ * @returns {Array<{label: string, value: string}>} Transformation options
  */
 function getTransformationOptions(propertyType) {
   const transformations = {
@@ -197,22 +202,18 @@ function getTransformationOptions(propertyType) {
       { label: "Count items", value: "count_items" },
       { label: "Extract number", value: "extract_number" }
     ],
-    // NEW: Added for checkbox properties (e.g., hasAttachments, starred)
     checkbox: [
       { label: "True if exists", value: "exists_to_true" },
       { label: "Convert yes/no", value: "yes_no" }
     ],
-    // NEW: Added for multi-select properties (e.g., labels)
     multi_select: [
       { label: "Split by comma", value: "split_comma" },
       { label: "Use first item", value: "first_item" }
     ],
-    // NEW: Added for select properties (e.g., labels as single select)
     select: [
       { label: "Use first label", value: "first_item" },
       { label: "Join all labels", value: "join_items" }
     ],
-    // NEW: Added for files properties (attachments)
     files: [
       { label: "Upload to Drive", value: "upload_drive" },
       { label: "Skip attachments", value: "skip_files" }
@@ -222,71 +223,65 @@ function getTransformationOptions(propertyType) {
   return transformations[propertyType] || [{ label: "No processing", value: "none" }];
 }
 
-// ============================================
-// ADDITIONAL HELPER FUNCTIONS
-// ============================================
-
 /**
- * Get recommended email field for property type
- * MUST return a valid string, never null or undefined
+ * Get recommended email field for a property type
+ * @param {string} propertyType - Notion property type
+ * @returns {string} Recommended Gmail field
  */
 function getRecommendedEmailField(propertyType) {
   const recommendations = {
-    "title": "subject",
-    "rich_text": "body",
-    "email": "from",
-    "url": "gmailLinkUrl",  // Perfect for URL properties!
-    "date": "date",
-    "checkbox": "hasAttachments",
-    "number": "attachmentCount",
-    "select": "labels",
-    "multi_select": "labels",
-    "status": "labels",
-    "files": "attachments",
-    "phone_number": "from",
-    "people": "from"  // Note: This is now unused since people is static
+    title: "subject",
+    rich_text: "body",
+    email: "from",
+    url: "gmailLinkUrl", // Perfect for URL properties!
+    date: "date",
+    checkbox: "hasAttachments",
+    number: "attachmentCount",
+    select: "labels",
+    multi_select: "labels",
+    status: "labels",
+    files: "attachments",
+    phone_number: "from",
+    people: "from"
   };
   
   return recommendations[propertyType] || "subject";
 }
 
 /**
- * Get property type display name for UI
- * @param {string} propertyType - The Notion property type
+ * Get display name for property type
+ * @param {string} propertyType - Notion property type
  * @returns {string} Display name
  */
 function getPropertyTypeDisplayName(propertyType) {
   const displayNames = {
-    "title": "Title",
-    "rich_text": "Text",
-    "select": "Select",
-    "status": "Status",
-    "multi_select": "Multi-select",
-    "checkbox": "Checkbox",
-    "people": "People",
-    "date": "Date",
-    "files": "Files",
-    "relation": "Relation",
-    "url": "URL",
-    "number": "Number",
-    "phone_number": "Phone",
-    "email": "Email"
+    title: "Title",
+    rich_text: "Text",
+    select: "Select",
+    status: "Status",
+    multi_select: "Multi-select",
+    checkbox: "Checkbox",
+    people: "People",
+    date: "Date",
+    files: "Files",
+    relation: "Relation",
+    url: "URL",
+    number: "Number",
+    phone_number: "Phone",
+    email: "Email"
   };
   
   return displayNames[propertyType] || propertyType;
 }
 
-// ============================================
-// TEST FUNCTIONS
-// ============================================
-
 /**
- * Test function to verify all notion-fetcher functions work
+ * Test Notion fetcher functions
+ * @returns {string} Test results
  */
 function testNotionFetcherFunctions() {
   console.log("=== Testing Notion Fetcher Functions ===");
   
-  let allPassed = true;
+  let allTestsPassed = true;
   const testResults = [];
   
   // Test isPropertyMappable
@@ -304,14 +299,16 @@ function testNotionFetcherFunctions() {
   mappableTests.forEach(test => {
     const result = isPropertyMappable(test.type);
     const passed = result === test.expected;
+    
     testResults.push({ test: test.desc, passed });
     console.log(`  ${passed ? "✅" : "❌"} ${test.desc}: ${result} (expected ${test.expected})`);
-    if (!passed) allPassed = false;
+    
+    if (!passed) allTestsPassed = false;
   });
   
   // Test shouldShowGmailFieldMapping
   console.log("\nTesting shouldShowGmailFieldMapping():");
-  const gmailMappingTests = [
+  const gmailFieldTests = [
     { type: "title", expected: true, desc: "title should show Gmail fields" },
     { type: "relation", expected: false, desc: "relation should NOT show Gmail fields" },
     { type: "select", expected: false, desc: "select should NOT show Gmail fields" },
@@ -321,66 +318,72 @@ function testNotionFetcherFunctions() {
     { type: "rich_text", expected: true, desc: "rich_text should show Gmail fields" }
   ];
   
-  gmailMappingTests.forEach(test => {
+  gmailFieldTests.forEach(test => {
     const result = shouldShowGmailFieldMapping(test.type);
     const passed = result === test.expected;
+    
     testResults.push({ test: test.desc, passed });
     console.log(`  ${passed ? "✅" : "❌"} ${test.desc}: ${result} (expected ${test.expected})`);
-    if (!passed) allPassed = false;
+    
+    if (!passed) allTestsPassed = false;
   });
   
   // Test getRecommendedEmailField
   console.log("\nTesting getRecommendedEmailField():");
-  const emailFieldTests = [
+  const recommendationTests = [
     { type: "title", expected: "subject", desc: "title -> subject" },
     { type: "url", expected: "gmailLinkUrl", desc: "url -> gmailLinkUrl" },
     { type: "unknown", expected: "subject", desc: "unknown -> subject" },
     { type: "date", expected: "date", desc: "date -> date" }
   ];
   
-  emailFieldTests.forEach(test => {
+  recommendationTests.forEach(test => {
     const result = getRecommendedEmailField(test.type);
     const passed = result === test.expected;
+    
     testResults.push({ test: test.desc, passed });
     console.log(`  ${passed ? "✅" : "❌"} ${test.desc}: ${result} (expected ${test.expected})`);
-    if (!passed) allPassed = false;
+    
+    if (!passed) allTestsPassed = false;
   });
   
   // Test getTransformationOptions
   console.log("\nTesting getTransformationOptions():");
-  const titleTransforms = getTransformationOptions("title");
-  const transformsIsArray = Array.isArray(titleTransforms);
-  const hasTransforms = titleTransforms.length > 0;
+  const options = getTransformationOptions("title");
+  const isArray = Array.isArray(options);
+  const hasItems = options.length > 0;
   
-  testResults.push({ test: "getTransformationOptions returns array", passed: transformsIsArray });
-  testResults.push({ test: "getTransformationOptions has items", passed: hasTransforms });
+  testResults.push({ test: "getTransformationOptions returns array", passed: isArray });
+  testResults.push({ test: "getTransformationOptions has items", passed: hasItems });
   
-  console.log(`  ${transformsIsArray ? "✅" : "❌"} Returns array: ${transformsIsArray}`);
-  console.log(`  ${hasTransforms ? "✅" : "❌"} Has items: ${titleTransforms.length}`);
+  console.log(`  ${isArray ? "✅" : "❌"} Returns array: ${isArray}`);
+  console.log(`  ${hasItems ? "✅" : "❌"} Has items: ${options.length}`);
   
-  if (!transformsIsArray || !hasTransforms) {
-    allPassed = false;
+  if (!isArray || !hasItems) {
+    allTestsPassed = false;
   }
   
   // Summary
   console.log("\n=== TEST SUMMARY ===");
   const passedCount = testResults.filter(r => r.passed).length;
-  const totalTests = testResults.length;
+  const totalCount = testResults.length;
   
-  console.log(`Passed: ${passedCount}/${totalTests}`);
+  console.log(`Passed: ${passedCount}/${totalCount}`);
   
-  return allPassed ? 
-    `✅ All Notion fetcher tests passed! (${passedCount}/${totalTests})` : 
-    `❌ Some tests failed! (${passedCount}/${totalTests})`;
+  return allTestsPassed 
+    ? `✅ All Notion fetcher tests passed! (${passedCount}/${totalCount})`
+    : `❌ Some tests failed! (${passedCount}/${totalCount})`;
 }
 
 /**
  * Quick test for Notion API connectivity
+ * @returns {string} Test result message
  */
 function testNotionAPIConnection() {
   console.log("=== Testing Notion API Connection ===");
   
   const config = getConfig();
+  
   if (!config.apiKey) {
     console.log("❌ No API key configured");
     return "❌ Please set your Notion API key in Settings first.";
@@ -391,12 +394,13 @@ function testNotionAPIConnection() {
   try {
     // Test by fetching users (lightweight endpoint)
     const users = fetchNotionWorkspaceUsers();
+    
     console.log(`✅ Notion API connection successful! Found ${users.length} workspace users.`);
     
     if (users.length > 0) {
       console.log("Sample users:");
-      users.slice(0, 3).forEach((user, i) => {
-        console.log(`  ${i + 1}. ${user.name} (${user.email})`);
+      users.slice(0, 3).forEach((user, index) => {
+        console.log(`  ${index + 1}. ${user.name} (${user.email})`);
       });
     }
     
@@ -410,11 +414,13 @@ function testNotionAPIConnection() {
 
 /**
  * Test database schema fetching
+ * @returns {string} Test result message
  */
 function testDatabaseSchema() {
   console.log("=== Testing Database Schema Fetch ===");
   
   const config = getConfig();
+  
   if (!config.apiKey || !config.databaseId) {
     return "❌ Please configure API key and select a database first.";
   }
@@ -423,13 +429,13 @@ function testDatabaseSchema() {
     const result = fetchNotionDatabaseSchema(config.databaseId, config.apiKey);
     
     if (result.success) {
-      const db = result.database;
-      console.log(`✅ Database loaded: ${db.title}`);
-      console.log(`Total properties: ${db.properties.length}`);
+      const database = result.database;
+      console.log("✅ Database loaded: " + database.title);
+      console.log("Total properties: " + database.properties.length);
       
       // Count property types
       const typeCounts = {};
-      db.properties.forEach(prop => {
+      database.properties.forEach(prop => {
         typeCounts[prop.type] = (typeCounts[prop.type] || 0) + 1;
       });
       
@@ -438,14 +444,13 @@ function testDatabaseSchema() {
         console.log(`  ${type}: ${count} properties`);
       });
       
-      return `✅ Database schema loaded: ${db.title} with ${db.properties.length} properties`;
-    } else {
-      return `❌ Failed to load database: ${result.error}`;
+      return `✅ Database schema loaded: ${database.title} with ${database.properties.length} properties`;
     }
+    
+    return "❌ Failed to load database: " + result.error;
+    
   } catch (error) {
     console.error("Error testing database schema:", error);
     return "❌ Error testing database schema: " + error.message;
   }
 }
-
-// --- END: notion-fetcher.js ---
