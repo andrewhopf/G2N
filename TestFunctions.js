@@ -432,7 +432,201 @@ function testNotionFetcherFunctions() {
     : `❌ Some tests failed! (${passedCount}/${totalCount})`;
 }
 
+function testBodyExtraction() {
+  // Get a sample email
+  var threads = GmailApp.getInboxThreads(0, 1);
+  if (threads.length > 0) {
+    var messages = threads[0].getMessages();
+    if (messages.length > 0) {
+      var email = messages[0];
+      console.log("Subject:", email.getSubject());
+      console.log("Body (HTML) length:", email.getBody().length);
+      console.log("Body (Plain) length:", email.getPlainBody().length);
+      console.log("First 200 chars of plain body:", 
+        email.getPlainBody().substring(0, 200));
+      
+      // Test the extraction function
+      var extracted = extractEmailData(email.getId());
+      console.log("Extracted body length:", extracted?.body?.length || 0);
+      console.log("Extracted plainBody length:", extracted?.plainBody?.length || 0);
+    }
+  }
+}
+function checkCurrentMappings() {
+  var config = getConfig();
+  console.log("Configuration status:");
+  console.log("- API Key configured:", !!config.apiKey);
+  console.log("- Database selected:", !!config.databaseId);
+  console.log("- Database name:", config.databaseName);
+  console.log("- Has mappings:", config.hasMappings);
+  
+  var mappings = getMappings();
+  console.log("\nCurrent mappings (" + Object.keys(mappings).length + " total):");
+  
+  Object.entries(mappings).forEach(([key, mapping]) => {
+    console.log(`\nProperty: ${mapping.notionPropertyName || key}`);
+    console.log(`  Type: ${mapping.type}`);
+    console.log(`  Enabled: ${mapping.enabled}`);
+    console.log(`  Email Field: ${mapping.emailField}`);
+    console.log(`  Transformation: ${mapping.transformation}`);
+  });
+  
+  // Check specifically for body/plainBody mappings
+  console.log("\nSearching for body-related mappings...");
+  var bodyMappings = Object.entries(mappings).filter(([key, mapping]) => {
+    return mapping.emailField === 'body' || 
+           mapping.emailField === 'plainBody' ||
+           mapping.emailField === 'snippet' ||
+           mapping.notionPropertyName?.toLowerCase().includes('body') ||
+           mapping.notionPropertyName?.toLowerCase().includes('content') ||
+           mapping.notionPropertyName?.toLowerCase().includes('email');
+  });
+  
+  console.log("Found " + bodyMappings.length + " body-related mappings:");
+  bodyMappings.forEach(([key, mapping]) => {
+    console.log(`- ${mapping.notionPropertyName}: ${mapping.emailField} (enabled: ${mapping.enabled})`);
+  });
+}
 
+function testHtmlToTextTransformation() {
+  // Get a sample email
+  var threads = GmailApp.getInboxThreads(0, 1);
+  if (threads.length === 0) {
+    console.log("❌ No emails found");
+    return;
+  }
+  
+  var email = threads[0].getMessages()[0];
+  var emailData = extractEmailData(email.getId());
+  
+  console.log("Testing html_to_text transformation...");
+  console.log("Original HTML body length:", emailData.body.length);
+  console.log("Original plainBody length:", emailData.plainBody.length);
+  
+  // Test the transformation directly
+  var transformed = applyTransformation(emailData.body, "html_to_text");
+  
+  console.log("\nTransformation results:");
+  console.log("Transformed length:", transformed.length);
+  console.log("First 300 chars of transformed:");
+  console.log(transformed.substring(0, 300));
+  
+  // Test with truncate_500
+  var truncated = applyTransformation(emailData.body, "truncate_500");
+  console.log("\nTruncate_500 results:");
+  console.log("Truncated length:", truncated.length);
+  console.log("First 300 chars of truncated:");
+  console.log(truncated.substring(0, 300));
+  
+  // Compare with plainBody
+  console.log("\nPlainBody for comparison:");
+  console.log("plainBody length:", emailData.plainBody.length);
+  console.log("First 300 chars of plainBody:");
+  console.log(emailData.plainBody.substring(0, 300));
+}
+
+function previewMappingChanges() {
+  var userProps = PropertiesService.getUserProperties();
+  var mappingsJson = userProps.getProperty("G2N_MAPPINGS");
+  
+  if (!mappingsJson) {
+    console.log("❌ No mappings found");
+    return;
+  }
+  
+  var mappings = JSON.parse(mappingsJson);
+  console.log("=== PREVIEW OF CHANGES ===");
+  
+  Object.entries(mappings).forEach(([key, mapping]) => {
+    // Only show rich_text properties that would be affected
+    if (mapping.type === "rich_text") {
+      console.log(`\nProperty: ${mapping.notionPropertyName}`);
+      console.log(`  Type: ${mapping.type}`);
+      console.log(`  Current Email Field: ${mapping.emailField}`);
+      console.log(`  Current Transformation: ${mapping.transformation}`);
+      
+      if (mapping.emailField === "body") {
+        console.log(`  ⚠️ WOULD CHANGE: emailField: "body" → "plainBody"`);
+        console.log(`  ⚠️ WOULD CHANGE: transformation: "${mapping.transformation}" → "none"`);
+      }
+    }
+  });
+  
+  console.log("\n=== SUMMARY ===");
+  var affectedCount = Object.values(mappings).filter(m => 
+    m.type === "rich_text" && m.emailField === "body"
+  ).length;
+  
+  console.log(`Would affect ${affectedCount} rich_text property(ies) using "body" field`);
+}
+
+function testPlainBodyExtraction() {
+  // Get a sample email
+  var threads = GmailApp.getInboxThreads(0, 1);
+  if (threads.length === 0) {
+    console.log("❌ No emails found");
+    return;
+  }
+  
+  var email = threads[0].getMessages()[0];
+  var emailData = extractEmailData(email.getId());
+  
+  console.log("=== TESTING PLAINBODY EXTRACTION ===");
+  console.log("Body (HTML) length:", emailData.body?.length || 0);
+  console.log("PlainBody length:", emailData.plainBody?.length || 0);
+  
+  // Check if plainBody exists and has content
+  if (!emailData.plainBody || emailData.plainBody.trim().length === 0) {
+    console.log("❌ WARNING: plainBody is empty or doesn't exist!");
+    console.log("   This could break if we switch to plainBody");
+    return;
+  }
+  
+  // Test if the current transformation would work on plainBody
+  var currentMappings = getMappings();
+  Object.entries(currentMappings).forEach(([key, mapping]) => {
+    if (mapping.type === "rich_text" && mapping.emailField === "body") {
+      console.log(`\nTesting "${mapping.notionPropertyName}":`);
+      console.log(`  Current transformation: ${mapping.transformation}`);
+      
+      // Test the transformation on plainBody
+      var result = applyTransformation(emailData.plainBody, mapping.transformation);
+      console.log(`  Transformation result length: ${result?.length || 0}`);
+      console.log(`  First 100 chars: ${(result || "").substring(0, 100)}...`);
+      
+      // Test formatting for Notion
+      var formatted = formatForNotionAPI(result, "rich_text");
+      console.log(`  Can format for Notion: ${!!formatted}`);
+    }
+  });
+}
+
+function testFixedSave() {
+  var threads = GmailApp.getInboxThreads(0, 1);
+  if (threads.length === 0) {
+    console.log("❌ No emails found");
+    return;
+  }
+  
+  var email = threads[0].getMessages()[0];
+  
+  console.log("Testing fixed save function...");
+  console.log("Email has plainBody:", email.getPlainBody().length > 0);
+  
+  var result = saveEmailToNotion({
+    gmail: {
+      messageId: email.getId()
+    }
+  });
+  
+  if (result.success) {
+    console.log("\n✅ SUCCESS! Email saved with body content!");
+    console.log("Page URL:", result.url);
+    console.log("\nCheck your Notion database - the 'Email Body' field should now contain content!");
+  } else {
+    console.log("\n❌ FAILED:", result.message);
+  }
+}
 
 // ============================================
 // INITIALIZATION

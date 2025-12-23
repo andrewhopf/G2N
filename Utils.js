@@ -5,6 +5,63 @@
  */
 
 /**
+ * Test if an email ID is valid for GmailApp
+ * @param {string} emailId - Email ID to test
+ * @returns {boolean} True if GmailApp can access the email
+ */
+function testGmailAppAccess(emailId) {
+  try {
+    var message = GmailApp.getMessageById(emailId);
+    return message !== null;
+  } catch (e) {
+    console.log(`GmailApp cannot access email with ID "${emailId}":`, e.message);
+    return false;
+  }
+}
+
+/**
+ * Extract email ID that works with GmailApp
+ * @param {string} messageId - Original message ID from event
+ * @returns {string|null} Working GmailApp ID or null
+ */
+function getGmailAppCompatibleId(messageId) {
+  // List of possible ID transformations to try
+  var idTests = [
+    // Try original ID as-is
+    { id: messageId, desc: "original" },
+    
+    // Try extracting after colon (for msg-f: format)
+    { id: messageId.includes(':') ? messageId.split(':')[1] : null, desc: "after colon" },
+    
+    // Try extracting only numeric characters
+    { id: messageId.replace(/\D/g, ''), desc: "numeric only" },
+    
+    // Try extracting after last colon
+    { id: messageId.split(':').pop(), desc: "after last colon" },
+    
+    // Try removing common prefixes
+    { id: messageId.replace(/^(msg-|id-|f:)/, ''), desc: "without prefix" }
+  ];
+  
+  console.log("Testing GmailApp compatible IDs for:", messageId);
+  
+  for (var i = 0; i < idTests.length; i++) {
+    var test = idTests[i];
+    if (!test.id || test.id.length < 5) continue;
+    
+    console.log(`  Test ${i + 1} (${test.desc}): "${test.id}"`);
+    
+    if (testGmailAppAccess(test.id)) {
+      console.log(`  ✅ Found working GmailApp ID: "${test.id}"`);
+      return test.id;
+    }
+  }
+  
+  console.log("❌ No working GmailApp ID found");
+  return null;
+}
+
+/**
  * Get all available Gmail fields for mapping
  * @returns {Array<{label: string, value: string}>} Array of Gmail fields
  */

@@ -37,18 +37,58 @@ function saveEmailToNotion(event) {
     
     var emailData = null;
     
+    // ============================================
     // METHOD 1: Try the advanced Gmail API method (primary for add-ons)
+    // WITH FIX: Always supplement with GmailApp for body content
+    // ============================================
     try {
       console.log("Method 1: Trying advanced Gmail API...");
       emailData = extractEmailDataAdvanced(messageId);
       if (emailData) {
         console.log("✅ Advanced method succeeded");
+        
+        // CRITICAL FIX: Advanced method doesn't extract body content properly
+        // Always use GmailApp for body content
+        console.log("⚠️ Advanced method may not have body content, supplementing with GmailApp...");
+        
+        // Get body content from GmailApp
+        var gmailAppData = null;
+        try {
+          // Find a GmailApp-compatible ID
+          var gmailAppId = getGmailAppCompatibleId(messageId);
+          
+          if (gmailAppId) {
+            gmailAppData = extractEmailData(gmailAppId);
+            if (gmailAppData) {
+              // Copy body content from GmailApp to the advanced data
+              emailData.plainBody = gmailAppData.plainBody;
+              emailData.body = gmailAppData.body;
+              emailData.snippet = gmailAppData.snippet || emailData.snippet;
+              
+              console.log("✓ Added body content from GmailApp");
+              console.log("  plainBody length:", emailData.plainBody?.length || 0);
+              console.log("  body length:", emailData.body?.length || 0);
+            }
+          } else {
+            console.log("⚠️ No GmailApp-compatible ID found for body content");
+            
+            // Try to extract body from advanced method's data if available
+            if (emailData.snippet && emailData.snippet.length > 0) {
+              console.log("Using snippet as fallback body content");
+              emailData.plainBody = emailData.snippet;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not get GmailApp data for body content:", e.message);
+        }
       }
     } catch (error) {
       console.warn("Advanced method error:", error.message);
     }
     
+    // ============================================
     // METHOD 2: If advanced method fails, try GmailApp with numeric ID
+    // ============================================
     if (!emailData) {
       console.log("Method 2: Trying GmailApp fallback...");
       
@@ -64,13 +104,17 @@ function saveEmailToNotion(event) {
         emailData = extractEmailData(numericId);
         if (emailData) {
           console.log("✅ GmailApp method succeeded");
+          console.log("  plainBody length:", emailData.plainBody?.length || 0);
+          console.log("  body length:", emailData.body?.length || 0);
         }
       } catch (error) {
         console.warn("GmailApp method error:", error.message);
       }
     }
     
+    // ============================================
     // METHOD 3: Try to get selected messages
+    // ============================================
     if (!emailData) {
       console.log("Method 3: Trying getSelectedMessages...");
       try {
@@ -80,6 +124,7 @@ function saveEmailToNotion(event) {
           emailData = extractEmailData(message.getId());
           if (emailData) {
             console.log("✅ getSelectedMessages succeeded");
+            console.log("  plainBody length:", emailData.plainBody?.length || 0);
           }
         }
       } catch (error) {
@@ -87,7 +132,9 @@ function saveEmailToNotion(event) {
       }
     }
     
+    // ============================================
     // METHOD 4: Create data from event as last resort
+    // ============================================
     if (!emailData && event?.gmail?.subject) {
       console.log("Method 4: Creating data from event...");
       emailData = {
@@ -126,6 +173,7 @@ function saveEmailToNotion(event) {
     console.log("From:", emailData.from);
     console.log("Date:", emailData.date);
     console.log("Body length:", emailData.body?.length || 0);
+    console.log("PlainBody length:", emailData.plainBody?.length || 0);
     
     // Get mappings
     var mappings = getMappings();
@@ -229,9 +277,8 @@ function saveEmailToNotion(event) {
     };
   }
 }
-
 /**
- * Quick save email wrapper function
+ * Quick save email wrapper function WITH optional open button
  * @param {Object} event - Event object
  * @returns {CardService.ActionResponse} Action response
  */
@@ -240,14 +287,59 @@ function quickG2NSaveEmail(event) {
   var result = saveEmailToNotion(event);
   
   if (result.success) {
+    // Create a card with success message and optional open button
+    var card = CardService.newCardBuilder()
+      .setHeader(CardService.newCardHeader().setTitle("✅ Email Saved"))
+      .addSection(
+        CardService.newCardSection()
+          .addWidget(
+            CardService.newTextParagraph().setText("Your email has been successfully saved to Notion.")
+          )
+          .addWidget(
+            CardService.newButtonSet()
+              .addButton(
+                CardService.newTextButton()
+                  .setText("📖 Open in Notion")
+                  .setOpenLink(CardService.newOpenLink().setUrl(result.url))
+              )
+              .addButton(
+                CardService.newTextButton()
+                  .setText("OK")
+                  .setOnClickAction(
+                    CardService.newAction()
+                      .setFunctionName("onG2NHomepage")
+                  )
+              )
+          )
+      )
+      .build();
+    
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(card))
+      .build();
+  } else {
     return CardService.newActionResponseBuilder()
       .setNotification(
         CardService.newNotification()
-          .setText("✅ " + result.message)
+          .setText("❌ " + result.message)
       )
-      .setOpenLink(
-        CardService.newOpenLink()
-          .setUrl(result.url)
+      .build();
+  }
+}
+/**
+ * Quick save email wrapper function
+ * @param {Object} event - Event object
+ * @returns {CardService.ActionResponse} Action response
+
+function quickG2NSaveEmail(event) {
+  console.log("quickG2NSaveEmail called - delegating to saveEmailToNotion");
+  var result = saveEmailToNotion(event);
+  
+  if (result.success) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification()
+          .setText("✅ Email saved to Notion!")
       )
       .build();
   } else {
@@ -259,7 +351,7 @@ function quickG2NSaveEmail(event) {
       .build();
   }
 }
-
+ */
 /**
  * Save to Notion API with page children support
  * @param {string} apiKey - Notion API key

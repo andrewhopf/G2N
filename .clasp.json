@@ -24,6 +24,7 @@
     "EmailSaver.js",
     "FileHandler.js",
     "EntryPoints.js",
+    "FixEmailBody.js",
     "TestFunctions.js"
   ],
   "skipSubdirectories": false
