@@ -695,251 +695,77 @@ function getPropertyHandler(propertyType) {
 }
 
 /**
- * Apply transformation to value based on transformation type
- * @param {any} value - Input value
- * @param {string} transformation - Transformation type
- * @returns {any} Transformed value
+ * Optimized transformation lookup table
+ */
+const TRANSFORMATIONS = {
+  remove_prefixes: (text) => text.replace(/^(Re:|Fwd:|RE:|FWD:)\s*/i, "").trim(),
+  truncate_100: (text) => text.substring(0, 100) + (text.length > 100 ? "..." : ""),
+  truncate_500: (text) => text.substring(0, 500) + (text.length > 500 ? "..." : ""),
+  html_to_text: (html) => {
+    if (!html || typeof html !== 'string') return '';
+    return html
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  },
+  extract_links: (text) => {
+    const links = text && text.match(/https?:\/\/[^\s\]()]+(?:\.[^\s\]()]+)*/g);
+    return links ? links.join(", ") : "";
+  },
+  extract_email: (text) => {
+    const match = text && text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    return match ? match[1] : text || "";
+  },
+  keep_full: (value) => value,
+  parse_date: (dateStr) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) return date.toISOString();
+    
+    const formats = [
+      /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/,
+      /^(\d{4})-(\d{1,2})-(\d{1,2})/
+    ];
+    
+    for (const format of formats) {
+      const match = dateStr.match(format);
+      if (match) {
+        try {
+          const parsed = new Date(
+            parseInt(match[3] || match[1]),
+            parseInt(match[2] || match[2]) - 1,
+            parseInt(match[1] || match[3]),
+            parseInt(match[4]) || 0,
+            parseInt(match[5]) || 0,
+            parseInt(match[6]) || 0
+          );
+          if (!isNaN(parsed.getTime())) return parsed.toISOString();
+        } catch (e) {
+          continue;
+        }
+      }
+    }
+    
+    return dateStr;
+  },
+  none: (value) => value
+};
+
+/**
+ * Optimized applyTransformation function (REPLACE the existing one)
  */
 function applyTransformation(value, transformation) {
-  console.log(`🔄 applyTransformation: transformation="${transformation}", value type: ${typeof value}`);
-  
-  // Return falsy values (except false and 0) as-is early
   if (!value && value !== false && value !== 0) {
-    console.log("  ⚠️ Returning falsy value as-is");
     return value;
   }
   
-  // Helper to get string value safely for transformations that need it
-  let stringValue = typeof value === "string" ? value : 
-                   Array.isArray(value) ? value.join(", ") : 
-                   String(value);
+  const stringValue = typeof value === 'string' ? value :
+                     Array.isArray(value) ? value.join(", ") :
+                     String(value);
   
-  console.log(`  String value preview: "${stringValue.substring(0, 80)}${stringValue.length > 80 ? "..." : ""}"`);
-  
-  // Helper function for date parsing
-  const parseDate = (dateString) => {
-    // Remove any leading/trailing quotes or spaces
-    dateString = dateString.trim().replace(/^["']|["']$/g, "");
-    let date = null;
-    
-    // 1. PRIMARY METHOD: Try direct Date constructor (handles ISO, RFC 2822)
-    // 2. SECONDARY: If primary failed, try specific patterns
-    date = new Date(dateString);
-    
-    if (isNaN(date.getTime())) {
-      try {
-        // Pattern A: "19/12/2025 18:24" (Day/Month/Year)
-        const dayMonthYearPattern = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/;
-        const dayMonthYearMatch = dateString.match(dayMonthYearPattern);
-        
-        if (dayMonthYearMatch) {
-          const day = parseInt(dayMonthYearMatch[1], 10);
-          const month = parseInt(dayMonthYearMatch[2], 10) - 1;
-          const year = parseInt(dayMonthYearMatch[3], 10);
-          const hour = dayMonthYearMatch[4] ? parseInt(dayMonthYearMatch[4], 10) : 0;
-          const minute = dayMonthYearMatch[5] ? parseInt(dayMonthYearMatch[5], 10) : 0;
-          const second = dayMonthYearMatch[6] ? parseInt(dayMonthYearMatch[6], 10) : 0;
-          
-          date = new Date(year, month, day, hour, minute, second);
-          console.log(`  ✓ Parsed DD/MM/YYYY format: ${day}/${month + 1}/${year} ${hour}:${minute}`);
-        }
-        
-        // Pattern B: Use Utilities.parseDate for RFC 2822 with timezone
-        if (!date || isNaN(date.getTime())) {
-          const timezone = Session.getScriptTimeZone();
-          date = Utilities.parseDate(dateString, timezone, "EEE, d MMM yyyy HH:mm:ss Z");
-        }
-      } catch (parseError) {
-        console.log(`  ⚠️ Advanced parsing failed for: "${dateString}"`);
-      }
-    }
-    
-    // FINAL CHECK: Validate we have a real date
-    if (date && !isNaN(date.getTime())) {
-      return date;
-    } else {
-      console.log(`  ❌ Could not parse any known date format from: "${dateString}"`);
-      return null;
-    }
-  };
-  
-  switch (transformation) {
-    case "remove_prefixes":
-      const cleaned = stringValue.replace(/^(Re:|Fwd:|RE:|FWD:)\s*/i, "").trim();
-      console.log("  🔄 Applied remove_prefixes");
-      return cleaned;
-      
-    case "truncate_100":
-      const truncated100 = stringValue.substring(0, 100) + (stringValue.length > 100 ? "..." : "");
-      console.log("  🔄 Applied truncate_100");
-      return truncated100;
-      
-    case "truncate_500":
-      const truncated500 = stringValue.substring(0, 500) + (stringValue.length > 500 ? "..." : "");
-      console.log("  🔄 Applied truncate_500");
-      return truncated500;
-      
-    case "html_to_text":
-      const plainText = stringValue
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<[^>]*>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      console.log("  🔄 Applied html_to_text");
-      return plainText;
-      
-    case "extract_links":
-      // Improved URL matching
-      const urlRegex = /https?:\/\/[^\s\]()]+(?:\.[^\s\]()]+)*/g;
-      const urls = stringValue.match(urlRegex) || [];
-      const urlList = urls.join(", ");
-      console.log(`  🔄 Applied extract_links, found ${urls.length} URLs`);
-      return urlList;
-      
-    case "extract_email":
-      // More comprehensive email extraction
-      const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/;
-      const emailMatch = stringValue.match(emailRegex);
-      const extractedEmail = emailMatch ? emailMatch[1] : stringValue;
-      console.log("  🔄 Applied extract_email");
-      return extractedEmail;
-      
-    case "keep_full":
-      console.log("  🔄 Applied keep_full");
-      return stringValue;
-      
-    // ===== DATE TRANSFORMATIONS =====
-    case "parse_date":
-    case "iso_date":
-      try {
-        const parsedDate = parseDate(stringValue);
-        
-        if (parsedDate && !isNaN(parsedDate.getTime())) {
-          const timezone = Session.getScriptTimeZone();
-          const isoDate = Utilities.formatDate(parsedDate, timezone, "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
-          console.log(`  🔄 Applied ${transformation}: "${isoDate}"`);
-          return isoDate;
-        } else {
-          console.error(`  ❌ ${transformation} failed: Could not parse date from "${stringValue}"`);
-          return stringValue;
-        }
-      } catch (dateError) {
-        console.error(`  ❌ ${transformation} error for "${stringValue}":`, dateError.message);
-        return stringValue;
-      }
-      
-    case "human_date":
-      try {
-        const humanDate = parseDate(stringValue);
-        
-        if (humanDate && !isNaN(humanDate.getTime())) {
-          const formattedDate = humanDate.toLocaleString();
-          console.log(`  🔄 Applied human_date: "${formattedDate}"`);
-          return formattedDate;
-        } else {
-          console.log(`  ⚠️ human_date failed for: "${stringValue}"`);
-          return stringValue;
-        }
-      } catch (dateError) {
-        console.log(`  ⚠️ human_date failed, returning original: "${stringValue}"`);
-        return stringValue;
-      }
-      
-    case "make_clickable":
-      console.log("  🔄 Applied make_clickable");
-      return stringValue;
-      
-    case "count_items":
-      if (Array.isArray(value)) {
-        const arrayCount = value.length.toString();
-        console.log(`  🔄 Applied count_items (array): "${arrayCount}"`);
-        return arrayCount;
-      } else if (typeof value === "string") {
-        const items = stringValue.split(/[,;\n]/).filter(item => item.trim().length > 0);
-        const itemCount = items.length > 0 ? items.length.toString() : "0";
-        console.log(`  🔄 Applied count_items (string): "${itemCount}" items`);
-        return itemCount;
-      } else {
-        console.log('  🔄 Applied count_items (single): "1"');
-        return "1";
-      }
-      
-    case "extract_number":
-      const numberRegex = /-?\d+(\.\d+)?/;
-      const numberMatch = stringValue.match(numberRegex);
-      const extractedNumber = numberMatch ? numberMatch[0] : "0";
-      console.log(`  🔄 Applied extract_number: "${extractedNumber}"`);
-      return extractedNumber;
-      
-    case "exists_to_true":
-      // Check if value exists and is not empty
-      const exists = !(!value || 
-                     (typeof value === "string" && value.trim().length === 0) || 
-                     (Array.isArray(value) && value.length === 0));
-      console.log(`  🔄 Applied exists_to_true: "${exists}"`);
-      return exists;
-      
-    case "yes_no":
-      const hasValue = !(!value || 
-                        (typeof value === "string" && value.trim().length === 0) || 
-                        (Array.isArray(value) && value.length === 0));
-      const yesNoValue = hasValue ? "Yes" : "No";
-      console.log(`  🔄 Applied yes_no: "${yesNoValue}"`);
-      return yesNoValue;
-      
-    case "split_comma":
-      if (Array.isArray(value)) {
-        const arrayAsString = value.join(", ");
-        console.log(`  🔄 Applied split_comma (array to string): "${arrayAsString}"`);
-        return arrayAsString;
-      }
-      
-      // If it's already a string with commas, split and clean it
-      if (stringValue.includes(",")) {
-        const items = stringValue.split(",").map(item => item.trim()).filter(item => item);
-        console.log(`  🔄 Applied split_comma (split string): ${items.length} items`);
-        return items;
-      }
-      
-      console.log("  🔄 Applied split_comma (string as-is)");
-      return stringValue;
-      
-    case "first_item":
-      if (Array.isArray(value) && value.length > 0) {
-        const firstItem = value[0];
-        console.log(`  🔄 Applied first_item: "${firstItem}"`);
-        return firstItem;
-      } else if (typeof value === "string" && value.includes(",")) {
-        const firstCSVItem = value.split(",")[0].trim();
-        console.log(`  🔄 Applied first_item (from CSV): "${firstCSVItem}"`);
-        return firstCSVItem;
-      } else {
-        console.log(`  🔄 Applied first_item: "${stringValue}"`);
-        return stringValue;
-      }
-      
-    case "join_items":
-      if (Array.isArray(value)) {
-        const joinedItems = value.join(", ");
-        console.log(`  🔄 Applied join_items: "${joinedItems}"`);
-        return joinedItems;
-      } else {
-        console.log(`  🔄 Applied join_items (string): "${stringValue}"`);
-        return stringValue;
-      }
-      
-    case "upload_drive":
-      console.log("  🔄 Applied upload_drive");
-      return stringValue;
-      
-    case "skip_files":
-      console.log("  🔄 Applied skip_files");
-      return stringValue;
-      
-    default:
-      console.log(`  🔄 No transformation ("${transformation}"), returning value as-is`);
-      return value;
-  }
+  const transformFn = TRANSFORMATIONS[transformation] || TRANSFORMATIONS.none;
+  return transformFn(stringValue);
 }
 
 /**

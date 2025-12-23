@@ -1,18 +1,124 @@
 /**
- * @fileoverview Utility functions for Gmail to Notion integration
- * @version 2.0.0
- * @description Shared utilities for data transformation, validation, and API calls
+ * @fileoverview Utility functions with caching support for Gmail to Notion integration
+ * @version 2.1.0
+ * @description Shared utilities with caching, data transformation, validation, and API calls
  */
+
+// Cache Service for reducing API calls
+const CACHE = {
+  databases: CacheService.getUserCache(),
+  schemas: CacheService.getUserCache(),
+  users: CacheService.getUserCache(),
+  
+  get: function(key, type = 'databases') {
+    try {
+      const cached = this[type].get(key);
+      return cached ? JSON.parse(cached) : null;
+    } catch (e) {
+      return null;
+    }
+  },
+  
+  set: function(key, value, type = 'databases', expiration = 300) {
+    try {
+      this[type].put(key, JSON.stringify(value), expiration);
+    } catch (e) {
+      console.warn('Cache set failed:', e);
+    }
+  },
+  
+  remove: function(key, type = 'databases') {
+    this[type].remove(key);
+  }
+};
+
+/**
+ * Optimized fetch with caching for Notion databases
+ */
+function fetchRealNotionDatabases() {
+  console.log("=== DEBUG: fetchRealNotionDatabases called ===");
+  const config = getConfig();
+  
+  if (!config.apiKey) {
+    console.log("ERROR: No API key configured");
+    return [];
+  }
+  
+  // Check cache first
+  const cacheKey = `databases_${config.apiKey.substr(0, 8)}`;
+  const cached = CACHE.get(cacheKey);
+  if (cached) {
+    console.log("Returning cached databases");
+    return cached;
+  }
+  
+  try {
+    const options = {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + config.apiKey,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json"
+      },
+      payload: JSON.stringify({
+        filter: { property: "object", value: "database" },
+        sort: { direction: "descending", timestamp: "last_edited_time" }
+      }),
+      muteHttpExceptions: true
+    };
+    
+    console.log("Making API request to Notion...");
+    const response = UrlFetchApp.fetch("https://api.notion.com/v1/search", options);
+    const status = response.getResponseCode();
+    const text = response.getContentText();
+    
+    console.log("Notion API response status: " + status);
+    
+    if (status === 200) {
+      const results = JSON.parse(text).results || [];
+      console.log(`Found ${results.length} databases`);
+      
+      const databases = results.map(db => {
+        let name = "Untitled Database";
+        
+        // Extract title efficiently
+        if (db.title && db.title.length > 0) {
+          name = db.title[0].plain_text;
+        } else if (db.properties) {
+          const titleProp = Object.values(db.properties).find(p => p.type === "title");
+          if (titleProp) {
+            name = titleProp.name || "Untitled Database";
+          }
+        }
+        
+        return {
+          id: db.id,
+          name: name,
+          url: db.url,
+          icon: db.icon,
+          lastEdited: db.last_edited_time
+        };
+      });
+      
+      // Cache the results
+      CACHE.set(cacheKey, databases);
+      return databases;
+    } else {
+      console.error(`Notion API error ${status}:`, text.substring(0, 200));
+      return [];
+    }
+  } catch (error) {
+    console.error("Error fetching databases:", error);
+    return [];
+  }
+}
 
 /**
  * Test if an email ID is valid for GmailApp
- * @param {string} emailId - Email ID to test
- * @returns {boolean} True if GmailApp can access the email
  */
 function testGmailAppAccess(emailId) {
   try {
-    var message = GmailApp.getMessageById(emailId);
-    return message !== null;
+    return GmailApp.getMessageById(emailId) !== null;
   } catch (e) {
     console.log(`GmailApp cannot access email with ID "${emailId}":`, e.message);
     return false;
@@ -21,35 +127,22 @@ function testGmailAppAccess(emailId) {
 
 /**
  * Extract email ID that works with GmailApp
- * @param {string} messageId - Original message ID from event
- * @returns {string|null} Working GmailApp ID or null
  */
 function getGmailAppCompatibleId(messageId) {
-  // List of possible ID transformations to try
-  var idTests = [
-    // Try original ID as-is
+  const idTests = [
     { id: messageId, desc: "original" },
-    
-    // Try extracting after colon (for msg-f: format)
     { id: messageId.includes(':') ? messageId.split(':')[1] : null, desc: "after colon" },
-    
-    // Try extracting only numeric characters
     { id: messageId.replace(/\D/g, ''), desc: "numeric only" },
-    
-    // Try extracting after last colon
     { id: messageId.split(':').pop(), desc: "after last colon" },
-    
-    // Try removing common prefixes
     { id: messageId.replace(/^(msg-|id-|f:)/, ''), desc: "without prefix" }
   ];
   
   console.log("Testing GmailApp compatible IDs for:", messageId);
   
-  for (var i = 0; i < idTests.length; i++) {
-    var test = idTests[i];
+  for (const test of idTests) {
     if (!test.id || test.id.length < 5) continue;
     
-    console.log(`  Test ${i + 1} (${test.desc}): "${test.id}"`);
+    console.log(`  Test (${test.desc}): "${test.id}"`);
     
     if (testGmailAppAccess(test.id)) {
       console.log(`  ✅ Found working GmailApp ID: "${test.id}"`);
@@ -63,41 +156,29 @@ function getGmailAppCompatibleId(messageId) {
 
 /**
  * Get all available Gmail fields for mapping
- * @returns {Array<{label: string, value: string}>} Array of Gmail fields
  */
 function getAvailableGmailFields() {
   return [
-    // Basic fields
     { label: "📝 Subject", value: "subject" },
     { label: "👤 From/Sender", value: "from" },
     { label: "👥 To Recipients", value: "to" },
     { label: "📋 CC Recipients", value: "cc" },
     { label: "👻 BCC Recipients", value: "bcc" },
     { label: "↩️ Reply-To", value: "replyTo" },
-    
-    // Dates
     { label: "📅 Date Received", value: "date" },
     { label: "✉️ Message Date", value: "internalDate" },
-    
-    // Content
     { label: "📄 Body (HTML)", value: "body" },
     { label: "📄 Body (Plain Text)", value: "plainBody" },
     { label: "📋 Body Snippet", value: "snippet" },
-    
-    // Identification
     { label: "🔑 Message ID", value: "messageId" },
     { label: "🧵 Thread ID", value: "threadId" },
     { label: "🔗 Gmail Link URL", value: "gmailLinkUrl" },
     { label: "#️⃣ History ID", value: "historyId" },
-    
-    // Status
     { label: "🏷️ Labels", value: "labels" },
     { label: "📌 Starred", value: "starred" },
     { label: "📥 In Inbox", value: "inInbox" },
     { label: "💬 Has Attachments", value: "hasAttachments" },
     { label: "👀 Unread", value: "unread" },
-    
-    // Attachments
     { label: "📎 Attachments", value: "attachments" },
     { label: "#️⃣ Attachment Count", value: "attachmentCount" },
     { label: "📎 Attachment Names", value: "attachmentNames" }
@@ -106,55 +187,39 @@ function getAvailableGmailFields() {
 
 /**
  * Get allowed Notion property types for a specific Gmail field
- * @param {string} gmailField - The Gmail field name
- * @returns {string[]} Array of allowed Notion property types
  */
 function getAllowedPropertyTypesForGmailField(gmailField) {
   const mapping = {
-    // Email identification
     subject: ["title", "rich_text", "url"],
     from: ["email", "rich_text"],
     to: ["email", "rich_text"],
     cc: ["email", "rich_text"],
     bcc: ["email", "rich_text"],
     replyTo: ["email", "rich_text"],
-    
-    // Content
     body: ["rich_text"],
     plainBody: ["rich_text"],
     snippet: ["rich_text"],
-    
-    // Dates
     date: ["date", "rich_text"],
     internalDate: ["date", "rich_text", "number"],
-    
-    // Identification
     messageId: ["rich_text", "url"],
     threadId: ["rich_text", "url"],
     gmailLinkUrl: ["url", "rich_text"],
     historyId: ["rich_text", "number"],
-    
-    // Status
     labels: ["multi_select", "select", "rich_text"],
     starred: ["checkbox", "rich_text"],
     inInbox: ["checkbox", "rich_text"],
     hasAttachments: ["checkbox", "rich_text"],
     unread: ["checkbox", "rich_text"],
-    
-    // Attachments
     attachments: ["files", "rich_text"],
     attachmentCount: ["number", "rich_text", "checkbox"],
     attachmentNames: ["rich_text"]
   };
   
-  return mapping[gmailField] || ["rich_text"]; // Default to rich_text
+  return mapping[gmailField] || ["rich_text"];
 }
 
 /**
  * Extract specific header from email message
- * @param {GmailApp.GmailMessage} email - Gmail message
- * @param {string} headerName - Header name to extract
- * @returns {string} Header value or empty string
  */
 function extractHeader(email, headerName) {
   try {
@@ -166,11 +231,6 @@ function extractHeader(email, headerName) {
 
 /**
  * Save data to Notion API
- * @param {string} apiKey - Notion API key
- * @param {string} databaseId - Notion database ID
- * @param {Object} properties - Properties to save
- * @returns {Object} Response object with id and url
- * @throws {Error} If API call fails
  */
 function saveToNotionAPI(apiKey, databaseId, properties) {
   const payload = {
@@ -222,27 +282,24 @@ function saveToNotionAPI(apiKey, databaseId, properties) {
 
 /**
  * Extract email address from string
- * @param {string} text - Text containing email address
- * @returns {string|null} Extracted email address
  */
 function extractEmailFromString(text) {
   if (!text) return null;
-  
-  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-  const match = text.match(emailRegex);
-  
+  const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
   return match ? match[0] : null;
 }
 
 /**
  * Find Notion user ID by email address
- * @param {string} email - Email address
- * @param {string} apiKey - Notion API key
- * @returns {string|null} Notion user ID or null if not found
  */
 function findNotionUserIdByEmail(email, apiKey) {
   try {
     if (!email || !apiKey) return null;
+    
+    // Check cache first
+    const cacheKey = `user_${email}`;
+    const cached = CACHE.get(cacheKey, 'users');
+    if (cached) return cached;
     
     const options = {
       method: "GET",
@@ -257,8 +314,6 @@ function findNotionUserIdByEmail(email, apiKey) {
     
     if (response.getResponseCode() === 200) {
       const users = JSON.parse(response.getContentText()).results || [];
-      
-      // Find user by email (case-insensitive)
       const user = users.find(user => 
         user.type === "person" && 
         user.person?.email?.toLowerCase() === email.toLowerCase()
@@ -266,6 +321,7 @@ function findNotionUserIdByEmail(email, apiKey) {
       
       if (user) {
         console.log(`Found Notion user for email ${email}: ${user.id}`);
+        CACHE.set(cacheKey, user.id, 'users', 600);
         return user.id;
       }
     }
@@ -281,9 +337,6 @@ function findNotionUserIdByEmail(email, apiKey) {
 
 /**
  * Apply mappings to email data to create Notion properties
- * @param {Object} emailData - Extracted email data
- * @param {Object} mappings - Field mappings configuration
- * @returns {Object} Notion API properties object
  */
 function applyMappings(emailData, mappings) {
   console.log("=== APPLYING MAPPINGS ===");
@@ -292,23 +345,17 @@ function applyMappings(emailData, mappings) {
   
   Object.entries(mappings).forEach(([propertyId, mapping]) => {
     try {
-      // Skip if mapping is not enabled (except for required properties)
-      if (!mapping.enabled && !mapping.isRequired) {
-        return;
-      }
+      if (!mapping.enabled && !mapping.isRequired) return;
       
       const handler = getPropertyHandler(mapping.type);
-      
       if (handler && handler.processForNotion) {
         const propertyValue = handler.processForNotion(mapping, emailData);
-        
         if (propertyValue !== null) {
           notionProperties[propertyId] = propertyValue;
         }
       }
     } catch (error) {
       console.error(`Error applying mapping for property ${propertyId}:`, error);
-      // Continue with other mappings even if one fails
     }
   });
   
@@ -318,12 +365,9 @@ function applyMappings(emailData, mappings) {
 
 /**
  * Escape HTML for safe display in UI
- * @param {string} text - Text to escape
- * @returns {string} Escaped HTML
  */
 function escapeHtml(text) {
   if (!text) return "";
-  
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -334,27 +378,18 @@ function escapeHtml(text) {
 
 /**
  * Validate email address format
- * @param {string} email - Email address to validate
- * @returns {boolean} True if valid email format
  */
 function isValidEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 /**
  * Format date to ISO string with timezone
- * @param {Date|string} date - Date to format
- * @returns {string} ISO date string
  */
 function formatToISODate(date) {
   try {
     const dateObj = date instanceof Date ? date : new Date(date);
-    
-    if (isNaN(dateObj.getTime())) {
-      throw new Error("Invalid date");
-    }
-    
+    if (isNaN(dateObj.getTime())) throw new Error("Invalid date");
     return dateObj.toISOString();
   } catch (error) {
     console.error("Error formatting date:", error);

@@ -1,6 +1,30 @@
 /// FILE: CardBuilders.js
 // DESCRIPTION: Card builder functions for Google Workspace Add-on UI
 // ============================================
+/**
+ * Cache for UI elements that don't change often
+ */
+const UI_CACHE = {
+  commonButtons: {},
+  commonSections: {},
+  
+  getCommonButtons: function() {
+    if (!this.commonButtons.home) {
+      this.commonButtons.home = CardService.newTextButton()
+        .setText("🏠 Home")
+        .setOnClickAction(CardService.newAction().setFunctionName("onG2NHomepage"));
+      
+      this.commonButtons.settings = CardService.newTextButton()
+        .setText("⚙️ Settings")
+        .setOnClickAction(CardService.newAction().setFunctionName("showG2NSettings"));
+      
+      this.commonButtons.refresh = CardService.newTextButton()
+        .setText("🔄 Refresh")
+        .setOnClickAction(CardService.newAction().setFunctionName("onG2NHomepage"));
+    }
+    return this.commonButtons;
+  }
+};
 
 /**
  * Build the main mappings configuration card
@@ -432,161 +456,86 @@ function buildSchemaErrorCard(errorMessage) {
 }
 
 /**
- * Build homepage card with configuration status
- * @returns {CardService.Card} Homepage card
+ * Build efficient homepage card with cached UI elements
  */
 function buildHomepageCard() {
   console.log("Building homepage card");
+  const config = getConfig();
+  const hasApiKey = !!config.apiKey;
+  const hasDatabase = !!config.databaseId && hasApiKey;
+  const hasMappings = config.hasMappings && hasDatabase;
   
-  var config = getConfig();
-  var hasApiKey = !!config.apiKey;
-  var hasDatabase = !!config.databaseId && hasApiKey;
-  var hasMappings = config.hasMappings && hasDatabase;
+  const builder = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader()
+      .setTitle("📧 Gmail to Notion")
+      .setSubtitle("Save emails to your Notion workspace"))
+    .addSection(CardService.newCardSection()
+      .setHeader("📊 Status")
+      .addWidget(CardService.newKeyValue()
+        .setTopLabel("Notion Connection")
+        .setContent(hasApiKey ? "✅ Connected" : "❌ Not connected"))
+      .addWidget(CardService.newKeyValue()
+        .setTopLabel("Selected Database")
+        .setContent(hasDatabase ? "✅ " + config.databaseName : "❌ Not selected"))
+      .addWidget(CardService.newKeyValue()
+        .setTopLabel("Field Mappings")
+        .setContent(hasMappings ? "✅ Configured" : "❌ Not configured")));
   
-  var card = CardService.newCardBuilder()
-    .setHeader(
-      CardService.newCardHeader()
-        .setTitle("📧 Gmail to Notion")
-        .setSubtitle("Save emails to your Notion workspace")
-    )
-    .addSection(
-      CardService.newCardSection()
-        .setHeader("📊 Status")
-        .addWidget(
-          CardService.newKeyValue()
-            .setTopLabel("Notion Connection")
-            .setContent(hasApiKey ? "✅ Connected" : "❌ Not connected")
-        )
-        .addWidget(
-          CardService.newKeyValue()
-            .setTopLabel("Selected Database")
-            .setContent(hasDatabase ? "✅ " + config.databaseName : "❌ Not selected")
-        )
-        .addWidget(
-          CardService.newKeyValue()
-            .setTopLabel("Field Mappings")
-            .setContent(hasMappings ? "✅ Configured" : "❌ Not configured")
-        )
-    );
-  
-  // Show different content based on configuration state
   if (hasApiKey) {
     if (hasDatabase) {
       if (hasMappings) {
-        // FULLY CONFIGURED - Show email actions
-        card.addSection(
-          CardService.newCardSection()
-            .setHeader("🎉 Ready to Save Emails!")
-            .addWidget(
-              CardService.newTextParagraph()
-                .setText("Add-on is fully configured and ready to use.")
-            )
-            .addWidget(
-              CardService.newButtonSet()
-                .addButton(
-                  CardService.newTextButton()
-                    .setText("📨 View Email Preview")
-                    .setOnClickAction(
-                      CardService.newAction()
-                        .setFunctionName("onG2NGmailMessage")
-                    )
-                )
-            )
-        );
+        builder.addSection(CardService.newCardSection()
+          .setHeader("🎉 Ready to Save Emails!")
+          .addWidget(CardService.newTextParagraph()
+            .setText("Add-on is fully configured and ready to use."))
+          .addWidget(CardService.newButtonSet()
+            .addButton(CardService.newTextButton()
+              .setText("📨 View Email Preview")
+              .setOnClickAction(CardService.newAction()
+                .setFunctionName("onG2NGmailMessage")))));
       } else {
-        // Database selected, needs mappings
-        card.addSection(
-          CardService.newCardSection()
-            .setHeader("🔧 Setup Required")
-            .addWidget(
-              CardService.newTextParagraph()
-                .setText("Database selected! Now configure field mappings:")
-            )
-            .addWidget(
-              CardService.newButtonSet()
-                .addButton(
-                  CardService.newTextButton()
-                    .setText("⚙️ Configure Mappings")
-                    .setOnClickAction(
-                      CardService.newAction()
-                        .setFunctionName("showMappingsConfiguration")
-                    )
-                )
-            )
-        );
+        builder.addSection(CardService.newCardSection()
+          .setHeader("🔧 Setup Required")
+          .addWidget(CardService.newTextParagraph()
+            .setText("Database selected! Now configure field mappings:"))
+          .addWidget(CardService.newButtonSet()
+            .addButton(CardService.newTextButton()
+              .setText("⚙️ Configure Mappings")
+              .setOnClickAction(CardService.newAction()
+                .setFunctionName("showMappingsConfiguration")))));
       }
     } else {
-      // API key set, needs database
-      card.addSection(
-        CardService.newCardSection()
-          .setHeader("🔧 Setup Required")
-          .addWidget(
-            CardService.newTextParagraph()
-              .setText("API key is set! Now select a database:")
-          )
-          .addWidget(
-            CardService.newButtonSet()
-              .addButton(
-                CardService.newTextButton()
-                  .setText("🗄️ Select Database")
-                  .setOnClickAction(
-                    CardService.newAction()
-                      .setFunctionName("showDatabaseSelection")
-                  )
-              )
-          )
-      );
+      builder.addSection(CardService.newCardSection()
+        .setHeader("🔧 Setup Required")
+        .addWidget(CardService.newTextParagraph()
+          .setText("API key is set! Now select a database:"))
+        .addWidget(CardService.newButtonSet()
+          .addButton(CardService.newTextButton()
+            .setText("🗄️ Select Database")
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName("showDatabaseSelection")))));
     }
   } else {
-    // No configuration
-    card.addSection(
-      CardService.newCardSection()
-        .setHeader("🔧 Setup Required")
-        .addWidget(
-          CardService.newTextParagraph()
-            .setText("To get started, please configure the add-on:")
-        )
-        .addWidget(
-          CardService.newButtonSet()
-            .addButton(
-              CardService.newTextButton()
-                .setText("⚙️ Start Setup")
-                .setOnClickAction(
-                  CardService.newAction()
-                    .setFunctionName("showG2NSettings")
-                )
-            )
-        )
-    );
+    builder.addSection(CardService.newCardSection()
+      .setHeader("🔧 Setup Required")
+      .addWidget(CardService.newTextParagraph()
+        .setText("To get started, please configure the add-on:"))
+      .addWidget(CardService.newButtonSet()
+        .addButton(CardService.newTextButton()
+          .setText("⚙️ Start Setup")
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName("showG2NSettings")))));
   }
   
-  // Always show tools section (settings access)
-  card.addSection(
-    CardService.newCardSection()
-      .setHeader("🔧 Tools")
-      .addWidget(
-        CardService.newButtonSet()
-          .addButton(
-            CardService.newTextButton()
-              .setText("⚙️ Settings")
-              .setOnClickAction(
-                CardService.newAction()
-                  .setFunctionName("showG2NSettings")
-              )
-          )
-          .addButton(
-            CardService.newTextButton()
-              .setText("🔄 Refresh")
-              .setOnClickAction(
-                CardService.newAction()
-                  .setFunctionName("onG2NHomepage")
-              )
-          )
-      )
-  );
+  const commonButtons = UI_CACHE.getCommonButtons();
+  builder.addSection(CardService.newCardSection()
+    .setHeader("🔧 Tools")
+    .addWidget(CardService.newButtonSet()
+      .addButton(commonButtons.settings)
+      .addButton(commonButtons.refresh)));
   
   console.log("Homepage card built successfully");
-  return card.build();
+  return builder.build();
 }
 
 /**

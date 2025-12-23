@@ -7,29 +7,24 @@
  * Get saved mappings from user properties
  * @returns {Object} Mappings configuration object
  */
-function getMappings() {
-  var mappingsJson = PropertiesService.getUserProperties().getProperty("G2N_MAPPINGS") || "";
-  
-  if (mappingsJson) {
-    try {
-      return JSON.parse(mappingsJson);
-    } catch (error) {
-      console.error("Error parsing mappings:", error);
-      // Return minimal default if parsing fails
-      return {
-        title: {
-          notionPropertyName: "Name",
-          type: "title",
-          enabled: true,
-          emailField: "subject",
-          transformation: "none"
-        }
-      };
+function getMappings(){
+  var props=PropertiesService.getUserProperties(),
+      mappingsStr=props.getProperty("G2N_MAPPINGS")||"";
+  if(mappingsStr)try{
+    return JSON.parse(mappingsStr)
+  }catch(e){
+    console.error("Error parsing mappings:",e);
+    return{
+      title:{
+        notionPropertyName:"Name",
+        type:"title",
+        enabled:!0,
+        emailField:"subject",
+        transformation:"none"
+      }
     }
   }
-  
-  // If no saved mappings, return empty object
-  return {};
+  return{}
 }
 
 /**
