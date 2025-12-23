@@ -1,0 +1,52 @@
+{
+  "timeZone": "Africa/Johannesburg",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Gmail",
+        "version": "v1",
+        "serviceId": "gmail"
+      },
+      {
+        "userSymbol": "Drive",
+        "version": "v2",
+        "serviceId": "drive"
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.metadata",
+    "https://www.googleapis.com/auth/gmail.addons.current.message.action",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/script.scriptapp",
+    "https://www.googleapis.com/auth/drive.file"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Gmail to Notion",
+      "logoUrl": "https://www.gstatic.com/images/icons/material/system/1x/bookmark_white_24dp.png",
+      "homepageTrigger": {
+        "runFunction": "onG2NHomepage",
+        "enabled": true
+      },
+      "universalActions": [{
+        "label": "Settings",
+        "runFunction": "showG2NSettings"
+      }]
+    },
+    "gmail": {
+      "contextualTriggers": [{
+        "unconditional": {},
+        "onTriggerFunction": "onG2NGmailMessage"
+      }]
+    }
+  },
+  "urlFetchWhitelist": [
+    "https://api.notion.com/"
+  ]
+}

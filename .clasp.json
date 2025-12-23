@@ -1,0 +1,30 @@
+{
+  "scriptId": "1Qsu4IZdKLsYt6sIyojmbZjM6KUNO137hZTqLQ9CzEMJFISlJUkDlwke-",
+  "rootDir": "",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [
+    "Config.js",
+    "Utils.js", 
+    "NotionFetcher.js",
+    "Database.js",
+    "PropertyHandlers.js",
+    "RelationHandler.js",
+    "CardBuilders.js",
+    "Mappings.js",
+    "EmailProcessor.js",
+    "EmailSaver.js",
+    "FileHandler.js",
+    "EntryPoints.js",
+    "TestFunctions.js"
+  ],
+  "skipSubdirectories": false
+}
