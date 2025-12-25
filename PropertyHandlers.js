@@ -428,23 +428,8 @@ const PropertyHandlers = {
      * @returns {Object} Processed configuration
      */
     processConfiguration: function(property, formInput) {
-      const selectedDatabase = formInput["relation_database_" + property.id] || "";
-      const relationType = formInput["relation_type_" + property.id] || "none";
-      
-      return {
-        type: property.type,
-        notionPropertyName: property.name,
-        enabled: relationType !== "none" && !!selectedDatabase,
-        selectedDatabase: selectedDatabase,
-        relationType: relationType,
-        matchProperty: formInput["relation_match_property_" + property.id] || "",
-        matchValue: formInput["relation_match_value_" + property.id] || "",
-        specificPage: formInput["relation_specific_page_" + property.id] || "",
-        isStaticOption: true,
-        isRelation: true,
-        isRequired: property.isRequired,
-        relationConfig: property.config || {}
-      };
+      // Use the new relation configuration processor from RelationHandler.js
+      return processRelationConfiguration(property, formInput);
     },
     
     /**

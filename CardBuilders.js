@@ -171,91 +171,165 @@ function buildDatabaseInfoSection(database) {
 }
 
 /**
- * Build property mapping section with handler integration
+ * Build property mapping section with handler integration and intelligent mapping lookup
  * @param {Array} properties - Array of Notion properties
- * @param {Object} mappings - Current mappings configuration
+ * @param {Object} savedMappings - Current saved mappings configuration
  * @returns {CardService.CardSection} Property mapping section
  */
-function buildPropertyMappingSection(properties, mappings) {
-  console.log("=== DEBUG: Starting buildPropertyMappingSection with validation ===");
-  console.log("Total properties received:", properties.length);
-  
-  var section = CardService.newCardSection()
-    .setHeader("Property Mappings")
-    .addWidget(
-      CardService.newTextParagraph()
-        .setText("<b>Configure how email data maps to your Notion properties:</b>")
-    );
-  
-  // Process each property in order
-  properties.forEach((property, index) => {
-    var propertyId = property.id;
-    var propertyType = property.type;
+function buildPropertyMappingSection(properties, savedMappings) {
+    console.log("=== DEBUG: Starting buildPropertyMappingSection with enhanced lookup ===");
+    console.log("Total properties received:", properties.length);
+    console.log("Saved mappings count:", Object.keys(savedMappings).length);
     
-    console.log(`
-=== Processing property ${index + 1}: ${property.name} (${propertyType}) ===`);
+    var section = CardService.newCardSection()
+        .setHeader("Property Mappings")
+        .addWidget(
+            CardService.newTextParagraph()
+                .setText("<b>Configure how email data maps to your Notion properties:</b>")
+        );
     
-    // Get saved mapping or create default
-    var handler = getPropertyHandler(propertyType);
-    var mapping = mappings[propertyId];
-    
-    if (!mapping && handler && handler.processConfiguration) {
-      mapping = handler.processConfiguration(property, {});
-    }
-    
-    mapping = mapping || {
-      enabled: property.isTitle || false,
-      emailField: getRecommendedEmailField(propertyType) || "subject",
-      transformation: "none",
-      isStaticOption: false,
-      isRequired: property.isRequired || false
-    };
-    
-    // Skip auto-managed properties unless required
-    if (["formula", "rollup", "created_time", "created_by", "last_edited_time", "last_edited_by"].includes(propertyType) && !property.isRequired) {
-      console.log(">>> Skipping auto-managed property");
-    } else {
-      // Use handler to build UI if available
-      if (handler && handler.buildUI) {
-        console.log(">>> Using handler for:", propertyType);
-        try {
-          var uiWidgets = handler.buildUI(property, mapping);
-          
-          if (Array.isArray(uiWidgets)) {
-            // Process each widget, filtering Gmail field dropdowns
-            uiWidgets.forEach(widget => {
-              if (widget && widget.getFieldName && widget.getFieldName().startsWith("emailField_")) {
-                var filteredDropdown = createFilteredGmailFieldDropdown(
-                  widget.getFieldName(),
-                  propertyType,
-                  mapping.emailField
-                );
-                section.addWidget(filteredDropdown);
-              } else {
-                section.addWidget(widget);
-              }
-            });
-          } else {
-            section.addWidget(uiWidgets);
-          }
-        } catch (error) {
-          console.error(`Error building UI for ${property.name}:`, error);
-          addFallbackUI(section, property, propertyType, error.message);
+    // Helper function to intelligently find a mapping for a property
+    function findMappingForProperty(property, mappings) {
+        var propertyId = property.id;
+        var propertyName = property.name;
+        
+        console.log(`  Looking for mapping for: ${propertyName} (ID: ${propertyId})`);
+        
+        // 1. Try by raw property ID
+        if (mappings[propertyId]) {
+            console.log(`    ✅ Found by raw ID: ${propertyId}`);
+            return mappings[propertyId];
         }
-      } else {
-        console.log(">>> No handler found for:", propertyType);
-        addFallbackUI(section, property, propertyType, "No handler available");
-      }
-      
-      // Add divider between properties
-      if (index < properties.length - 1) {
-        section.addWidget(CardService.newDivider());
-      }
+        
+        // 2. Try by URL-encoded property ID (important for your case!)
+        var encodedId = encodeURIComponent(propertyId);
+        if (mappings[encodedId]) {
+            console.log(`    ✅ Found by encoded ID: ${encodedId}`);
+            return mappings[encodedId];
+        }
+        
+        // 3. Try by URL-decoded keys (some mappings might be saved with decoded IDs)
+        for (var key in mappings) {
+            try {
+                var decodedKey = decodeURIComponent(key);
+                if (decodedKey === propertyId) {
+                    console.log(`    ✅ Found by decoded key: ${key} -> ${propertyId}`);
+                    return mappings[key];
+                }
+            } catch (e) {
+                // Ignore decoding errors
+            }
+        }
+        
+        // 4. Try by property name (fallback)
+        for (var key in mappings) {
+            if (mappings[key].notionPropertyName === propertyName) {
+                console.log(`    ✅ Found by name: ${propertyName} -> key: ${key}`);
+                return mappings[key];
+            }
+        }
+        
+        console.log(`    ❌ No mapping found for ${propertyName}`);
+        return null;
     }
-  });
-  
-  console.log("=== DEBUG: Finished buildPropertyMappingSection ===");
-  return section;
+    
+    // Process each property in order
+    properties.forEach(function(property, index) {
+        var propertyId = property.id;
+        var propertyType = property.type;
+        var propertyName = property.name;
+        
+        console.log(`
+=== Processing property ${index + 1}: ${propertyName} (${propertyType}) ===`);
+        console.log("Property ID:", propertyId);
+        
+        // Find existing mapping
+        var mapping = findMappingForProperty(property, savedMappings);
+        
+        // If no mapping found, get handler and create default
+        var handler = getPropertyHandler(propertyType);
+        if (!mapping) {
+            if (handler && handler.processConfiguration) {
+                mapping = handler.processConfiguration(property, {});
+                console.log("  Created new config using handler");
+            } else {
+                mapping = {
+                    type: propertyType,
+                    notionPropertyName: propertyName,
+                    enabled: property.isTitle || false,
+                    emailField: getRecommendedEmailField(propertyType) || "subject",
+                    transformation: "none",
+                    isStaticOption: false,
+                    isRequired: property.isRequired || false
+                };
+                console.log("  Created default config");
+            }
+        } else {
+            console.log("  Using saved mapping:", mapping.notionPropertyName);
+            console.log("  Saved mapping enabled:", mapping.enabled);
+            console.log("  Saved emailField:", mapping.emailField);
+        }
+        
+        // Ensure mapping has required fields
+        mapping.type = mapping.type || propertyType;
+        mapping.notionPropertyName = mapping.notionPropertyName || propertyName;
+        mapping.enabled = mapping.enabled || false;
+        mapping.isRequired = mapping.isRequired || property.isRequired || false;
+        
+        // Skip auto-managed properties unless required
+        var autoManagedTypes = ["formula", "rollup", "created_time", "created_by", "last_edited_time", "last_edited_by"];
+        if (autoManagedTypes.includes(propertyType) && !property.isRequired) {
+            console.log("  >>> Skipping auto-managed property");
+            return; // Skip this property
+        }
+        
+        // Use handler to build UI if available
+        if (handler && handler.buildUI) {
+            console.log("  >>> Using handler for:", propertyType);
+            try {
+                var uiWidgets = handler.buildUI(property, mapping);
+                
+                if (Array.isArray(uiWidgets)) {
+                    // Process each widget
+                    uiWidgets.forEach(function(widget) {
+                        if (widget && widget.getFieldName) {
+                            var fieldName = widget.getFieldName();
+                            
+                            // Special handling for email field dropdowns
+                            if (fieldName && fieldName.startsWith("emailField_")) {
+                                var filteredDropdown = createFilteredGmailFieldDropdown(
+                                    fieldName,
+                                    propertyType,
+                                    mapping.emailField || getRecommendedEmailField(propertyType) || "subject"
+                                );
+                                section.addWidget(filteredDropdown);
+                            } else {
+                                section.addWidget(widget);
+                            }
+                        } else {
+                            section.addWidget(widget);
+                        }
+                    });
+                } else if (uiWidgets) {
+                    section.addWidget(uiWidgets);
+                }
+            } catch (error) {
+                console.error(`Error building UI for ${propertyName}:`, error);
+                addFallbackUI(section, property, propertyType, error.message);
+            }
+        } else {
+            console.log("  >>> No handler found for:", propertyType);
+            addFallbackUI(section, property, propertyType, "No handler available");
+        }
+        
+        // Add divider between properties (except after last property)
+        if (index < properties.length - 1) {
+            section.addWidget(CardService.newDivider());
+        }
+    });
+    
+    console.log("=== DEBUG: Finished buildPropertyMappingSection ===");
+    return section;
 }
 
 /**
@@ -266,32 +340,33 @@ function buildPropertyMappingSection(properties, mappings) {
  * @returns {CardService.SelectionInput|CardService.TextParagraph} Dropdown widget or error message
  */
 function createFilteredGmailFieldDropdown(fieldName, propertyType, currentValue) {
-  var gmailFields = getAvailableGmailFields();
-  var dropdown = CardService.newSelectionInput()
-    .setType(CardService.SelectionInputType.DROPDOWN)
-    .setFieldName(fieldName)
-    .setTitle("Email Source");
-  
-  // Add default option
-  dropdown.addItem("-- Select Gmail field --", "", !currentValue);
-  
-  var hasCompatibleFields = false;
-  
-  // Filter Gmail fields based on property type compatibility
-  gmailFields.forEach(field => {
-    if (getAllowedPropertyTypesForGmailField(field.value).includes(propertyType)) {
-      dropdown.addItem(field.label, field.value, currentValue === field.value);
-      hasCompatibleFields = true;
+    var gmailFields = getAvailableGmailFields();
+    var dropdown = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.DROPDOWN)
+        .setFieldName(fieldName)
+        .setTitle("Email Source");
+    
+    // Add default option
+    dropdown.addItem("-- Select Gmail field --", "", !currentValue);
+    
+    // Track if we found any compatible fields
+    var foundCompatible = false;
+    
+    // Filter Gmail fields based on property type compatibility
+    gmailFields.forEach(function(field) {
+        var allowedTypes = getAllowedPropertyTypesForGmailField(field.value);
+        if (allowedTypes.includes(propertyType)) {
+            dropdown.addItem(field.label, field.value, currentValue === field.value);
+            foundCompatible = true;
+        }
+    });
+    
+    if (foundCompatible) {
+        return dropdown;
+    } else {
+        return CardService.newTextParagraph()
+            .setText(`<font color="#FF6B6B">⚠️ No compatible Gmail fields for ${propertyType} properties</font>`);
     }
-  });
-  
-  // If no compatible fields, show message instead
-  if (!hasCompatibleFields) {
-    return CardService.newTextParagraph()
-      .setText(`<font color="#FF6B6B">⚠️ No compatible Gmail fields for ${propertyType} properties</font>`);
-  }
-  
-  return dropdown;
 }
 
 /**
@@ -302,22 +377,22 @@ function createFilteredGmailFieldDropdown(fieldName, propertyType, currentValue)
  * @param {string} errorMessage - Error message to display
  */
 function addFallbackUI(section, property, propertyType, errorMessage) {
-  section.addWidget(
-    CardService.newTextParagraph()
-      .setText(`<b>${property.name}</b> <font color="#666">(${getPropertyTypeDisplayName(propertyType)})</font>`)
-  );
-  
-  if (property.isRequired) {
     section.addWidget(
-      CardService.newTextParagraph()
-        .setText("<font color='#d93025'>⚠️ Required field</font>")
+        CardService.newTextParagraph()
+            .setText(`<b>${property.name}</b> <font color="#666">(${getPropertyTypeDisplayName(propertyType)})</font>`)
     );
-  }
-  
-  section.addWidget(
-    CardService.newTextParagraph()
-      .setText(`<font color='#FF6B6B'>⚠️ ${errorMessage}</font>`)
-  );
+    
+    if (property.isRequired) {
+        section.addWidget(
+            CardService.newTextParagraph()
+                .setText("<font color='#d93025'>⚠️ Required field</font>")
+        );
+    }
+    
+    section.addWidget(
+        CardService.newTextParagraph()
+            .setText(`<font color='#FF6B6B'>⚠️ ${errorMessage}</font>`)
+    );
 }
 
 /**

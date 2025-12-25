@@ -627,6 +627,157 @@ function testFixedSave() {
     console.log("\n❌ FAILED:", result.message);
   }
 }
+/**
+ * Debug function to check mappings
+ */
+function debugMappings() {
+    console.log("=== DEBUG MAPPINGS ===");
+    
+    var props = PropertiesService.getUserProperties();
+    var allProps = props.getProperties();
+    console.log("All user properties:", Object.keys(allProps));
+    
+    var mappingsJson = props.getProperty("G2N_MAPPINGS");
+    console.log("G2N_MAPPINGS exists:", !!mappingsJson);
+    console.log("G2N_MAPPINGS length:", mappingsJson ? mappingsJson.length : 0);
+    
+    if (mappingsJson) {
+        try {
+            var mappings = JSON.parse(mappingsJson);
+            console.log("Parsed mappings keys:", Object.keys(mappings));
+            console.log("Number of mappings:", Object.keys(mappings).length);
+            
+            // Log first few mappings
+            var count = 0;
+            for (var key in mappings) {
+                if (count < 5) {
+                    console.log("Mapping " + key + ":");
+                    console.log("  Property Name:", mappings[key].notionPropertyName);
+                    console.log("  Type:", mappings[key].type);
+                    console.log("  Enabled:", mappings[key].enabled);
+                    console.log("  Email Field:", mappings[key].emailField);
+                    count++;
+                } else {
+                    break;
+                }
+            }
+        } catch (e) {
+            console.error("Error parsing mappings:", e);
+        }
+    }
+    
+    // Also check config
+    var config = getConfig();
+    console.log("Config:", config);
+}
+
+/**
+ * Compare saved mappings with current schema
+ */
+function compareMappingsWithSchema() {
+    console.log("=== COMPARING MAPPINGS WITH SCHEMA ===");
+    
+    var config = getConfig();
+    if (!config.apiKey || !config.databaseId) {
+        console.log("ERROR: No API key or database ID");
+        return;
+    }
+    
+    // Get current schema
+    var schema = fetchNotionDatabaseSchema(config.databaseId, config.apiKey);
+    if (!schema.success) {
+        console.log("ERROR: Could not fetch schema");
+        return;
+    }
+    
+    var currentProperties = schema.database.properties;
+    console.log("Current schema has " + currentProperties.length + " properties");
+    
+    // Get saved mappings
+    var props = PropertiesService.getUserProperties();
+    var mappingsJson = props.getProperty("G2N_MAPPINGS");
+    if (!mappingsJson) {
+        console.log("ERROR: No saved mappings");
+        return;
+    }
+    
+    var savedMappings = JSON.parse(mappingsJson);
+    console.log("Saved mappings has " + Object.keys(savedMappings).length + " mappings");
+    
+    // Create maps for comparison
+    var savedByName = {};
+    var currentByName = {};
+    var savedById = {};
+    var currentById = {};
+    
+    // Build saved mappings maps
+    for (var id in savedMappings) {
+        var mapping = savedMappings[id];
+        savedByName[mapping.notionPropertyName] = { id: id, mapping: mapping };
+        savedById[id] = mapping;
+    }
+    
+    // Build current schema maps
+    currentProperties.forEach(function(prop) {
+        currentByName[prop.name] = { id: prop.id, prop: prop };
+        currentById[prop.id] = prop;
+    });
+    
+    console.log("\n=== COMPARISON BY NAME ===");
+    console.log("Properties in saved mappings but not in current schema:");
+    var missingInCurrent = [];
+    for (var name in savedByName) {
+        if (!currentByName[name]) {
+            missingInCurrent.push(name);
+        }
+    }
+    console.log(missingInCurrent.length > 0 ? missingInCurrent.join(", ") : "None");
+    
+    console.log("\nProperties in current schema but not in saved mappings:");
+    var missingInSaved = [];
+    for (var name in currentByName) {
+        if (!savedByName[name]) {
+            missingInSaved.push(name);
+        }
+    }
+    console.log(missingInSaved.length > 0 ? missingInSaved.join(", ") : "None");
+    
+    console.log("\n=== COMPARISON BY ID ===");
+    console.log("Checking if saved mapping IDs exist in current schema...");
+    var matchingIds = [];
+    var nonMatchingIds = [];
+    
+    for (var savedId in savedMappings) {
+        if (currentById[savedId]) {
+            matchingIds.push(savedId + " (" + savedMappings[savedId].notionPropertyName + ")");
+        } else {
+            nonMatchingIds.push(savedId + " (" + savedMappings[savedId].notionPropertyName + ")");
+        }
+    }
+    
+    console.log("Matching IDs: " + matchingIds.length);
+    if (matchingIds.length > 0) {
+        matchingIds.forEach(function(id) {
+            console.log("  ✅ " + id);
+        });
+    }
+    
+    console.log("\nNon-matching IDs: " + nonMatchingIds.length);
+    if (nonMatchingIds.length > 0) {
+        nonMatchingIds.forEach(function(id) {
+            console.log("  ❌ " + id);
+        });
+    }
+    
+    console.log("\n=== SUGGESTED ACTION ===");
+    if (nonMatchingIds.length > 0 && matchingIds.length === 0) {
+        console.log("All property IDs have changed. Run fixMappingsPropertyIds() to fix them.");
+    } else if (nonMatchingIds.length > 0) {
+        console.log("Some property IDs have changed. Run fixMappingsPropertyIds() to fix the mismatched ones.");
+    } else {
+        console.log("All property IDs match! The issue might be elsewhere.");
+    }
+}
 
 // ============================================
 // INITIALIZATION
