@@ -91,19 +91,49 @@ class FilesPropertyHandler extends BasePropertyHandler {
    * @inheritdoc
    */
   processForNotion(mapping, emailData, apiKey) {
-    if (!mapping.enabled) return null;
-    if (mapping.fileHandling === 'skip') return null;
-    if (!emailData.hasAttachments) return null;
-
+    if (!mapping.enabled) {
+      console.log('Files mapping disabled, skipping');
+      return null;
+    }
+    if (mapping.fileHandling === 'skip') {
+      console.log('Files mapping skipped by fileHandling');
+      return null;
+    }
+    if (mapping.fileHandling === 'link_only') {
+      console.log('Files mapping skipped by link_only');
+      return null;
+    }
     try {
+      const sourceAttachments = this._attachments.getAttachmentsForMessage(
+        emailData.messageId,
+        emailData.attachments
+      );
+      const attachments = this._attachments.filterSelectedAttachments(
+        sourceAttachments,
+        emailData.messageId
+      );
+
+      if (attachments.length === 0) {
+        console.log('No selected attachments, skipping files mapping');
+        return null;
+      }
+
       // Process attachments using the attachment service
       const processedFiles = this._attachments.processAttachments(
-        emailData.attachments,
+        attachments,
         emailData.subject,
         mapping.fileHandling
       );
 
       if (processedFiles.length === 0) return null;
+
+      // Save upload info for preview/success display
+      const uploadedSummary = processedFiles.map(file => ({
+        name: file.name,
+        url: file.url,
+        driveId: file.driveId || ''
+      }));
+      this._attachments.setLastUploadedAttachments(emailData.messageId, uploadedSummary);
 
       // Format for Notion files property
       return {

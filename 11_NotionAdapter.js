@@ -271,25 +271,24 @@ queryDatabase(databaseId, queryPayload = {}, apiKey) {
      * @param {string} apiKey - Notion API key
      * @returns {Object} Updated database
      */
-    ensureUrlProperty(databaseId, propertyName, apiKey) {
-        const cleanId = this._normalizeId(databaseId);
-        
-        const payload = {
-            properties: {
-                [propertyName]: { url: {} }
-            }
-        };
-
-        try {
-            this._logger.debug('Adding URL property via PATCH', { propertyName });
-            const result = this.request(`/databases/${cleanId}`, 'PATCH', payload, apiKey);
-            this._logger.info('URL property created', { propertyName });
-            return result;
-        } catch (error) {
-            this._logger.error('Failed to create URL property', error.message);
-            // Don't throw - allow workflow to continue
-            return null;
+    ensureFilesProperty(databaseId, propertyName, apiKey) {
+    const cleanId = this._normalizeId(databaseId);
+    const payload = {
+        properties: {
+        [propertyName]: { files: {} }
         }
+    };
+
+    try {
+        this._logger.debug('Adding FILES property via PATCH', { propertyName });
+        const result = this.request(`/databases/${cleanId}`, 'PATCH', payload, apiKey);
+        this._logger.info('Files property created', { propertyName });
+        return result;
+    } catch (error) {
+        this._logger.error('Failed to create Files property', error && error.message ? error.message : error);
+        // Non-fatal: return null so caller can deal with it
+        return null;
+    }
     }
 
  /**

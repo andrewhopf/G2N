@@ -9,40 +9,53 @@
  * @returns {Application} Initialized application instance
  */
 function bootstrap() {
-    // 1. Infrastructure Services
-    container.register('logger', Logger, { singleton: true });
-    container.register('cache', MemoryCache, { singleton: true });
-    container.register('events', EventEmitter, { singleton: true });
-    container.register('validation', ValidationService, { singleton: true });
+  // 1. Infrastructure Services
+  container.register('logger', Logger, { singleton: true });
+  container.register('cache', MemoryCache, { singleton: true });
+  container.register('events', EventEmitter, { singleton: true });
+  container.register('validation', ValidationService, { singleton: true });
 
-    // 2. Repositories
-    container.register('configRepo', ConfigRepository, {
-        dependencies: ['logger'],
-        singleton: true
-    });
-    container.register('mappingRepo', MappingRepository, {
-        dependencies: ['configRepo', 'logger'],
-        singleton: true
-    });
+  // 2. Repositories
+  container.register('configRepo', ConfigRepository, {
+    dependencies: ['logger'],
+    singleton: true
+  });
+  container.register('mappingRepo', MappingRepository, {
+    dependencies: ['configRepo', 'logger'],
+    singleton: true
+  });
+  container.registerFactory('attachmentMappingRepo', (c) => {
+    return new MappingRepository(c.resolve('configRepo'), c.resolve('logger'), 'attachmentMappings');
+  });
 
-    // 3. Adapters
-    container.register('gmailAdapter', GmailAdapter, {
-        dependencies: ['logger'],
-        singleton: true
-    });
-    container.register('notionAdapter', NotionAdapter, {
-        dependencies: ['logger', 'cache'],
-        singleton: true
-    });
+  // 3. Adapters
+  container.register('gmailAdapter', GmailAdapter, {
+    dependencies: ['logger'],
+    singleton: true
+  });
+  container.register('notionAdapter', NotionAdapter, {
+    dependencies: ['logger', 'cache'],
+    singleton: true
+  });
 
-    // 4. Registries and Handlers
-    container.register('fieldRegistry', GmailFieldRegistry, { singleton: true });
-    container.register('transformerRegistry', TransformerRegistry, { singleton: true });
-    
-    container.register('handlerFactory', PropertyHandlerFactory, {
-        dependencies: ['fieldRegistry', 'transformerRegistry'],
-        singleton: true
-    });
+  // 🔧 FIX: Register attachmentService BEFORE handlerFactory
+  container.register('attachmentService', AttachmentService, {
+    dependencies: ['logger'],
+    singleton: true
+  });
+
+  // 4. Registries and Handlers
+  container.register('fieldRegistry', GmailFieldRegistry, { singleton: true });
+  container.register('attachmentFieldRegistry', AttachmentFieldRegistry, { singleton: true });
+  container.register('transformerRegistry', TransformerRegistry, { singleton: true });
+  container.register('handlerFactory', PropertyHandlerFactory, {
+    dependencies: ['fieldRegistry', 'transformerRegistry'],
+    singleton: true
+  });
+  container.register('attachmentHandlerFactory', PropertyHandlerFactory, {
+    dependencies: ['attachmentFieldRegistry', 'transformerRegistry'],
+    singleton: true
+  });
 
     // 5. Services
     container.register('notionService', NotionService, {
@@ -60,6 +73,11 @@ function bootstrap() {
         singleton: true
     });
 
+    container.register('attachmentDatabaseService', AttachmentDatabaseService, {
+        dependencies: ['notionAdapter', 'configRepo', 'attachmentMappingRepo', 'logger'],
+        singleton: true
+    });
+
     container.register('attachmentService', AttachmentService, {
         dependencies: ['logger'],
         singleton: true
@@ -70,7 +88,17 @@ function bootstrap() {
         singleton: true
     });
 
+    container.register('attachmentMappingService', MappingService, {
+        dependencies: ['attachmentMappingRepo', 'attachmentHandlerFactory', 'logger'],
+        singleton: true
+    });
+
     container.register('contentBuilder', PageContentBuilder, { singleton: true });
+
+    container.register('attachmentPageService', AttachmentPageService, {
+        dependencies: ['notionAdapter', 'attachmentMappingService', 'attachmentDatabaseService', 'attachmentService', 'configRepo', 'logger'],
+        singleton: true
+    });
 
     // 6. Page Service (Factory pattern because it has many dependencies)
     container.registerFactory('pageService', (c) => {
@@ -85,7 +113,7 @@ function bootstrap() {
 
     // 7. Workflow Executor
     container.register('workflowExecutor', WorkflowExecutor, {
-        dependencies: ['emailService', 'pageService', 'events', 'logger'],
+        dependencies: ['emailService', 'pageService', 'attachmentPageService', 'events', 'logger'],
         singleton: true
     });
 

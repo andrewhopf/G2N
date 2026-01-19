@@ -483,3 +483,163 @@ function runNotionUrlTest() {
   
   return results;
 } 
+function showAttachmentsConfiguration(event) {
+  try {
+    const app = getApp();
+    const container = app.getContainer();
+    const notionService = container.resolve('notionService');
+    const configRepo = container.resolve('configRepo');
+    const logger = container.resolve('logger');
+    
+    logger.info('Building attachments configuration card');
+    
+    // Get current configuration
+    const config = configRepo.getAll();
+    
+    // List databases
+    let databases = [];
+    try {
+      databases = notionService.listDatabases() || [];
+    } catch (e) {
+      logger.warn('Could not list databases', e);
+      return _buildErrorCardSafely('Notion Error', 
+        'Could not list databases. Check API key and permissions.');
+    }
+    
+    const currentDbId = config.attachmentDatabaseId || config.databaseId || '';
+    
+    // Build the card
+    const header = CardService.newCardHeader()
+      .setTitle('📎 Attachments Configuration')
+      .setSubtitle('Configure how email attachments are handled');
+    
+    const card = CardService.newCardBuilder()
+      .setHeader(header);
+    
+    // === SECTION 1: Database Selection ===
+    const dbSection = CardService.newCardSection()
+      .setHeader('🗄️ Select Attachment Database');
+    
+    if (databases.length === 0) {
+      dbSection.addWidget(CardService.newTextParagraph()
+        .setText('No Notion databases found.'));
+    } else {
+      const selection = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.DROPDOWN)
+        .setFieldName('attachment_database_id') // Consistent field name
+        .setTitle('Choose Database');
+      
+      selection.addItem('-- Select database --', '', currentDbId === '');
+      databases.forEach(db => {
+        selection.addItem(db.name, db.id, db.id === currentDbId);
+      });
+      
+      dbSection.addWidget(selection);
+    }
+    
+    card.addSection(dbSection);
+    
+    // === SECTION 2: Files Property Configuration ===
+    const filesSection = CardService.newCardSection()
+      .setHeader('📁 Files Property');
+    
+    filesSection.addWidget(CardService.newTextInput()
+      .setFieldName('files_property_name') // Consistent field name
+      .setTitle('Property Name for Files')
+      .setValue(config.filesPropertyName || 'Attachments')
+      .setHint('Name of the files property in Notion (default: "Attachments")'));
+    
+    card.addSection(filesSection);
+    
+    // === SECTION 3: Attachment Handling ===
+    const handlingSection = CardService.newCardSection()
+      .setHeader('⚙️ Attachment Handling');
+    
+    const handlingDropdown = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.DROPDOWN)
+      .setFieldName('file_handling') // Consistent field name
+      .setTitle('How to handle attachments');
+    
+    const currentHandling = config.fileHandling || 'upload_to_drive';
+    handlingDropdown.addItem('Upload to Google Drive', 'upload_to_drive', currentHandling === 'upload_to_drive');
+    handlingDropdown.addItem('Link only (no upload)', 'link_only', currentHandling === 'link_only');
+    handlingDropdown.addItem('Skip attachments', 'skip', currentHandling === 'skip');
+    
+    handlingSection.addWidget(handlingDropdown);
+    card.addSection(handlingSection);
+    
+    // === SECTION 4: Actions ===
+    const actionSection = CardService.newCardSection()
+      .addWidget(CardService.newButtonSet()
+        .addButton(CardService.newTextButton()
+          .setText('✅ Ensure Files Property')
+          .setBackgroundColor('#0F9D58')
+          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('ensureAttachmentField')))
+        .addButton(CardService.newTextButton()
+          .setText('💾 Save Settings')
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('saveAttachmentSettings'))));
+    
+    card.addSection(actionSection);
+    
+    // === SECTION 5: Navigation ===
+    const navSection = CardService.newCardSection()
+      .addWidget(CardService.newButtonSet()
+        .addButton(CardService.newTextButton()
+          .setText('🔙 Back to Settings')
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('showG2NSettings')))
+        .addButton(CardService.newTextButton()
+          .setText('🏠 Home')
+          .setOnClickAction(CardService.newAction()
+            .setFunctionName('onG2NHomepage'))));
+    
+    card.addSection(navSection);
+    
+    return card.build();
+    
+  } catch (error) {
+    console.error('showAttachmentsConfiguration error:', error);
+    return _buildErrorCardSafely('Attachments Error', error.message || 'Unknown error');
+  }
+}
+/**
+ * Test attachments configuration
+ */
+function testAttachmentsConfig() {
+  try {
+    console.log('Testing attachments configuration...');
+    
+    const card = CardService.newCardBuilder()
+      .setHeader(CardService.newCardHeader()
+        .setTitle('🧪 Test Attachments'))
+      .addSection(CardService.newCardSection()
+        .addWidget(CardService.newTextParagraph()
+          .setText('Click below to test attachments configuration:'))
+        .addWidget(CardService.newButtonSet()
+          .addButton(CardService.newTextButton()
+            .setText('⚙️ Open Attachments Config')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('showAttachmentsConfiguration')))
+          .addButton(CardService.newTextButton()
+            .setText('🏠 Home')
+            .setOnClickAction(CardService.newAction()
+              .setFunctionName('onG2NHomepage')))))
+      .build();
+    
+    return card;
+    
+  } catch (error) {
+    console.error('Test error:', error);
+    
+    return CardService.newCardBuilder()
+      .setHeader(CardService.newCardHeader()
+        .setTitle('❌ Test Error'))
+      .addSection(CardService.newCardSection()
+        .addWidget(CardService.newTextParagraph()
+          .setText('Error: ' + error.message)))
+      .build();
+  }
+}

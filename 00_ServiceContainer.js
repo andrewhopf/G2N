@@ -152,3 +152,4 @@ class ServiceContainer {
 
 // Global container instance
 var container = new ServiceContainer();
+

@@ -53,16 +53,51 @@ class EmailPreviewCard extends BaseCardRenderer {
                 sections.push(this._buildCheckFailureWarning(duplicateError.message || 'Unknown error during duplicate check'));
             }
 
+            // ========== SECTION 0B: ATTACHMENT DUPLICATE WARNING ==========
+            try {
+                const attachmentWarning = this._checkForAttachmentDuplicates(messageId);
+                if (attachmentWarning) {
+                    sections.push(attachmentWarning);
+                }
+            } catch (attachmentError) {
+                this.logger.warn('Error checking attachment duplicates (non-fatal)', attachmentError);
+                sections.push(this._buildCheckFailureWarning(attachmentError.message || 'Unknown error during attachment duplicate check'));
+            }
+
             // ========== SECTION 1: EMAIL DETAILS ==========
             sections.push(this._buildEmailDetailsSection(messageId, status));
 
-            // ========== SECTION 2: MAPPINGS SUMMARY ==========
-            sections.push(this._buildMappingSummarySection());
+            // ========== SECTION 2: ATTACHMENTS (SELECTION) ==========
+            const attachmentSection = this._buildAttachmentSelectionSection(messageId);
+            if (attachmentSection) {
+                sections.push(attachmentSection);
+            }
 
-            // ========== SECTION 3: ACTIONS ==========
+            // ========== SECTION 2B: ATTACHMENT MAPPING WARNING ==========
+            const attachmentWarning = this._buildAttachmentMappingWarning(messageId);
+            if (attachmentWarning) {
+                sections.push(attachmentWarning);
+            }
+
+            // ========== SECTION 2C: ATTACHMENT UPLOADS ==========
+            const uploadSection = this._buildAttachmentUploadSection(messageId);
+            if (uploadSection) {
+                sections.push(uploadSection);
+            }
+
+            // ========== SECTION 3: MAPPINGS SUMMARY ==========
+            sections.push(this._buildMappingSummarySection(messageId));
+
+            // ========== SECTION 3B: ATTACHMENT MAPPINGS SUMMARY ==========
+            const attachmentMappingSection = this._buildAttachmentMappingSummarySection(messageId);
+            if (attachmentMappingSection) {
+                sections.push(attachmentMappingSection);
+            }
+
+            // ========== SECTION 4: ACTIONS ==========
             sections.push(this._buildActionSection(status, messageId));
 
-            // ========== SECTION 4: Home Button ==========
+            // ========== SECTION 5: Home Button ==========
             sections.push(
                 CardService.newCardSection().addWidget(
                     this.newButton('🏠 Home', 'onG2NHomepage')
@@ -289,6 +324,493 @@ _checkForDuplicates(messageId, status) {
     });
     return this._buildCheckFailureWarning('Error checking for duplicates: ' + (error.message || 'Unknown error'));
   }
+}
+
+/**
+ * Check for duplicate attachments by searching the attachment database
+ * for attachment name/size matches.
+ *
+ * @private
+ * @param {string} messageId - Gmail message ID
+ * @returns {CardService.CardSection|null}
+ */
+_checkForAttachmentDuplicates(messageId) {
+  if (!messageId) return null;
+
+  const config = this.configRepo.getAll();
+  if (!config.apiKey || !config.attachmentDatabaseId) {
+    this.logger.debug('Skipping attachment duplicate check - no attachment database configured');
+    return null;
+  }
+
+  if (config.fileHandling === 'skip') {
+    this.logger.debug('Skipping attachment duplicate check - attachments disabled');
+    return null;
+  }
+
+  const extracted = this._extractEmailData(messageId);
+  const emailData = extracted ? extracted.emailData : null;
+  if (!emailData) return null;
+
+  const gmailDuplicate = this._checkAttachmentDuplicatesByGmailLink(emailData, config);
+  if (gmailDuplicate) {
+    return gmailDuplicate;
+  }
+  const attachments = this._getAttachmentsForMessage(messageId, emailData);
+  if (!attachments || attachments.length === 0) return null;
+
+  const mappingRepo = this.container.resolve('attachmentMappingRepo');
+  const mappings = mappingRepo.getAll();
+  const nameMapping = this._findAttachmentMapping(mappings, 'attachmentName');
+  const sizeMapping = this._findAttachmentMapping(mappings, 'attachmentSize');
+
+  if (!nameMapping) {
+    return this._buildAttachmentCheckUnavailable('Attachment Name mapping not configured.');
+  }
+
+  const duplicates = [];
+
+  attachments.forEach(att => {
+    const name = att.getName ? att.getName() : '';
+    const size = att.getSize ? att.getSize() : 0;
+    if (!name) return;
+
+    const filters = [];
+    const nameFilter = this._buildEqualsFilter(nameMapping, name);
+    if (nameFilter) filters.push(nameFilter);
+
+    if (sizeMapping) {
+      const sizeFilter = this._buildEqualsFilter(sizeMapping, size);
+      if (sizeFilter) filters.push(sizeFilter);
+    }
+
+    if (filters.length === 0) return;
+
+    const filterPayload = filters.length === 1 ? filters[0] : { and: filters };
+    const queryPayload = { page_size: 5, filter: filterPayload };
+
+    try {
+      const results = this.notionService.adapter.queryDatabase(
+        config.attachmentDatabaseId,
+        queryPayload,
+        config.apiKey
+      );
+
+      if (results && results.length > 0) {
+        duplicates.push({
+          name: name,
+          url: results[0].url,
+          id: results[0].id
+        });
+      }
+    } catch (e) {
+      this.logger.warn('Attachment duplicate query failed', e);
+    }
+  });
+
+  if (duplicates.length === 0) {
+    return null;
+  }
+
+  return this._buildAttachmentDuplicateWarning(duplicates);
+}
+
+/**
+ * Check attachment database for duplicates using Gmail URL/message ID
+ * @private
+ * @param {EmailData} emailData
+ * @param {Object} config
+ * @returns {CardService.CardSection|null}
+ */
+_checkAttachmentDuplicatesByGmailLink(emailData, config) {
+  try {
+    let msgId = emailData.messageId;
+    if (!msgId && emailData.gmailLinkUrl) {
+      msgId = this._extractMessageIdFromUrl(emailData.gmailLinkUrl);
+    }
+
+    if (!msgId) return null;
+
+    const dbSchema = this.notionService.adapter.getDatabase(config.attachmentDatabaseId, config.apiKey);
+    const urlProperties = (dbSchema.properties || []).filter(p => p.type === 'url');
+    if (urlProperties.length === 0) return null;
+
+    for (const urlProp of urlProperties) {
+      const queryPayload = {
+        page_size: 5,
+        filter: {
+          property: urlProp.name,
+          url: { contains: msgId }
+        }
+      };
+
+      const results = this.notionService.adapter.queryDatabase(
+        config.attachmentDatabaseId,
+        queryPayload,
+        config.apiKey
+      );
+
+      if (results && results.length > 0) {
+        const page = results[0];
+        return this._buildAttachmentGmailDuplicateWarning({
+          id: page.id,
+          url: page.url,
+          title: this._extractPageTitle(page),
+          property: urlProp.name
+        });
+      }
+    }
+
+    return null;
+  } catch (error) {
+    this.logger.warn('Attachment Gmail-link duplicate check failed', error);
+    return null;
+  }
+}
+
+/**
+ * Build Gmail-link duplicate warning for attachments
+ * @private
+ */
+_buildAttachmentGmailDuplicateWarning(existingPage) {
+  const section = CardService.newCardSection();
+
+  section.addWidget(
+    CardService.newDecoratedText()
+      .setText('<b style="color: #d93025;">⚠️ ATTACHMENTS ALREADY SAVED</b>')
+      .setTopLabel('Attachment database already contains entries for this email')
+      .setWrapText(true)
+  );
+
+  section.addWidget(
+    CardService.newKeyValue()
+      .setTopLabel('Existing Page')
+      .setContent(existingPage.title || 'Untitled Page')
+      .setMultiline(true)
+  );
+
+  section.addWidget(
+    CardService.newTextParagraph()
+      .setText(`<font color="#666666"><i>Found in property: <b>${existingPage.property}</b></i></font>`)
+  );
+
+  section.addWidget(
+    CardService.newButtonSet()
+      .addButton(
+        CardService.newTextButton()
+          .setText('📄 View in Notion')
+          .setBackgroundColor('#4285F4')
+          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+          .setOpenLink(
+            CardService.newOpenLink()
+              .setUrl(existingPage.url)
+              .setOpenAs(CardService.OpenAs.FULL_SIZE)
+          )
+      )
+  );
+
+  return section;
+}
+
+/**
+ * Build attachment selection section for preview
+ * @private
+ * @param {string} messageId
+ * @returns {CardService.CardSection|null}
+ */
+_buildAttachmentSelectionSection(messageId) {
+  try {
+    if (!messageId) return null;
+    const extracted = this._extractEmailData(messageId);
+    const emailData = extracted ? extracted.emailData : null;
+    const attachments = this._getAttachmentsForMessage(messageId, emailData);
+    if (!attachments || attachments.length === 0) {
+      const emptySection = CardService.newCardSection()
+        .setHeader('📎 Attachments to Upload')
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('<i>No attachments found for this email.</i>')
+        );
+      return emptySection;
+    }
+
+    const attachmentService = this.container.resolve('attachmentService');
+    const selectedNames = attachmentService.getSelectedAttachmentNames(messageId);
+
+    const section = CardService.newCardSection()
+      .setHeader('📎 Attachments to Upload');
+
+    const selection = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('selected_attachments')
+      .setTitle('Choose attachments');
+
+    attachments.forEach(att => {
+      const name = att.getName ? att.getName() : 'Attachment';
+      const isSelected = selectedNames.length === 0 || selectedNames.includes(name);
+      selection.addItem(name, name, isSelected);
+    });
+
+    section.addWidget(selection);
+
+    const selectedLabel = selectedNames.length > 0
+      ? selectedNames.join(', ')
+      : 'All attachments (default)';
+
+    section.addWidget(
+      CardService.newTextParagraph()
+        .setText(`<b>Selected:</b> ${selectedLabel}`)
+    );
+
+    section.addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText('✅ Update Selection')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('saveSelectedAttachments')
+                .setParameters({
+                  messageId: messageId,
+                  totalCount: String(attachments.length)
+                })
+            )
+        )
+    );
+
+    return section;
+  } catch (error) {
+    this.logger.warn('Failed to build attachment selection section', error);
+    return null;
+  }
+}
+
+/**
+ * Warn if attachments are selected but no files property is mapped
+ * @private
+ * @param {string} messageId
+ * @returns {CardService.CardSection|null}
+ */
+_buildAttachmentMappingWarning(messageId) {
+  try {
+    if (!messageId) return null;
+    const config = this.configRepo.getAll();
+    if (!config.attachmentDatabaseId || config.fileHandling === 'skip') return null;
+
+    const extracted = this._extractEmailData(messageId);
+    const emailData = extracted ? extracted.emailData : null;
+    const attachments = this._getAttachmentsForMessage(messageId, emailData);
+    if (!attachments || attachments.length === 0) return null;
+
+    const attachmentService = this.container.resolve('attachmentService');
+    const selected = attachmentService.getSelectedAttachmentNames(messageId);
+    const selectedCount = selected.length > 0 ? selected.length : attachments.length;
+    if (selectedCount === 0) return null;
+
+    const mappingRepo = this.container.resolve('attachmentMappingRepo');
+    const mappings = Object.values(mappingRepo.getAll() || {});
+    const hasFilesMapping = mappings.some(m => m && m.type === 'files' && (m.enabled || m.isRequired));
+
+    const attachmentDbService = this.container.resolve('attachmentDatabaseService');
+    const schema = attachmentDbService.getCurrentSchema();
+    const hasFilesProperty = schema && Array.isArray(schema.properties)
+      ? schema.properties.some(p => p.type === 'files')
+      : false;
+
+    const warnings = [];
+    if (!hasFilesMapping) {
+      warnings.push('No Files property is mapped in attachment mappings.');
+    }
+    if (!hasFilesProperty) {
+      warnings.push('Attachment database has no Files property.');
+    }
+    if (config.fileHandling === 'link_only') {
+      warnings.push('File handling is set to "Link only" so files will not be uploaded.');
+    }
+
+    if (warnings.length === 0) return null;
+
+    const section = CardService.newCardSection()
+      .setHeader('⚠️ Attachments Not Ready');
+
+    section.addWidget(
+      CardService.newTextParagraph()
+        .setText(warnings.map(w => `• ${w}`).join('<br/>'))
+    );
+
+    const buttonSet = CardService.newButtonSet()
+      .addButton(
+        CardService.newTextButton()
+          .setText('🛠️ Create Files Property')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('ensureAttachmentFilesPropertyFromConfig')
+          )
+      )
+      .addButton(
+        CardService.newTextButton()
+          .setText('📎 Open Attachment Mappings')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('showAttachmentMappingsConfiguration')
+          )
+      )
+      .addButton(
+        CardService.newTextButton()
+          .setText('⚙️ Attachment Settings')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('showAttachmentsConfiguration')
+          )
+      );
+
+    section.addWidget(buttonSet);
+    return section;
+  } catch (error) {
+    this.logger.warn('Attachment mapping warning failed', error);
+    return null;
+  }
+}
+
+/**
+ * Show last uploaded attachment links (Drive)
+ * @private
+ * @param {string} messageId
+ * @returns {CardService.CardSection|null}
+ */
+_buildAttachmentUploadSection(messageId) {
+  try {
+    const attachmentService = this.container.resolve('attachmentService');
+    const last = attachmentService.getLastUploadedAttachments();
+    if (!last || !last.uploaded || last.uploaded.length === 0) return null;
+    if (last.messageId && messageId && last.messageId !== messageId) return null;
+
+    const section = CardService.newCardSection()
+      .setHeader('📂 Uploaded Attachments');
+
+    last.uploaded.forEach(file => {
+      if (!file || !file.url) return;
+      section.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<a href="${file.url}">${file.name || 'Attachment'}</a>`)
+      );
+    });
+
+    return section;
+  } catch (error) {
+    this.logger.warn('Attachment upload section failed', error);
+    return null;
+  }
+}
+
+/**
+ * Get attachments for a message, with fallback to GmailApp
+ * @private
+ * @param {string} messageId
+ * @param {EmailData|null} emailData
+ * @returns {Array}
+ */
+_getAttachmentsForMessage(messageId, emailData) {
+  const fallback = emailData && Array.isArray(emailData.attachments) ? emailData.attachments : [];
+  try {
+    const attachmentService = this.container.resolve('attachmentService');
+    return attachmentService.getAttachmentsForMessage(messageId, fallback);
+  } catch (error) {
+    this.logger.debug('Attachment service fetch failed', error.message);
+    return fallback;
+  }
+}
+
+/**
+ * Find mapping for attachment field
+ * @private
+ */
+_findAttachmentMapping(mappings, fieldName) {
+  const entries = Object.values(mappings || {});
+  return entries.find(m => m && m.emailField === fieldName && (m.enabled || m.isRequired));
+}
+
+/**
+ * Build a Notion filter for equals on a mapping type
+ * @private
+ */
+_buildEqualsFilter(mapping, value) {
+  if (!mapping || !mapping.notionPropertyName) return null;
+
+  switch (mapping.type) {
+    case 'title':
+      return { property: mapping.notionPropertyName, title: { equals: String(value) } };
+    case 'rich_text':
+      return { property: mapping.notionPropertyName, rich_text: { equals: String(value) } };
+    case 'url':
+      return { property: mapping.notionPropertyName, url: { equals: String(value) } };
+    case 'number':
+      return { property: mapping.notionPropertyName, number: { equals: Number(value) } };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build attachment duplicate warning section
+ * @private
+ * @param {Array<{name: string, url: string}>} duplicates
+ * @returns {CardService.CardSection}
+ */
+_buildAttachmentDuplicateWarning(duplicates) {
+  const section = CardService.newCardSection();
+
+  section.addWidget(
+    CardService.newDecoratedText()
+      .setText('<b style="color: #d93025;">⚠️ DUPLICATE ATTACHMENTS DETECTED</b>')
+      .setTopLabel('Some attachments already exist in the attachment database')
+      .setWrapText(true)
+  );
+
+  const names = duplicates.map(d => d.name).join('<br/>');
+  section.addWidget(
+    CardService.newTextParagraph()
+      .setText(`<b>Duplicates:</b><br/>${names}`)
+  );
+
+  const firstUrl = duplicates[0]?.url;
+  if (firstUrl) {
+    section.addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText('📄 View Existing')
+            .setBackgroundColor('#4285F4')
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+            .setOpenLink(
+              CardService.newOpenLink()
+                .setUrl(firstUrl)
+                .setOpenAs(CardService.OpenAs.FULL_SIZE)
+            )
+        )
+    );
+  }
+
+  return section;
+}
+
+/**
+ * Build warning section when attachment duplicate check cannot run
+ * @private
+ */
+_buildAttachmentCheckUnavailable(reason) {
+  const section = CardService.newCardSection();
+  section.addWidget(
+    CardService.newDecoratedText()
+      .setText('<b style="color: #f4b400;">⚠️ Attachment Duplicate Check Unavailable</b>')
+      .setTopLabel('Warning')
+      .setWrapText(true)
+  );
+  section.addWidget(
+    CardService.newTextParagraph()
+      .setText(`Attachments cannot be checked for duplicates. ${reason}`)
+  );
+  return section;
 }
 
 /**
@@ -867,19 +1389,20 @@ _buildEmailDetailsSection(messageId, status) {
      * @private
      * @returns {CardService.CardSection} Mapping summary section
      */
-    _buildMappingSummarySection() {
+    _buildMappingSummarySection(messageId) {
         const section = this.sectionWithHeader('📋 Notion Mappings');
         const enabledMappings = this.mappingRepo.getEnabled();
         const mappingKeys = Object.keys(enabledMappings);
+        const extracted = messageId ? this._extractEmailData(messageId) : null;
+        const emailData = extracted ? extracted.emailData : null;
 
         if (mappingKeys.length > 0) {
             let html = '<b>Enabled Mappings:</b><br/>';
             mappingKeys.forEach(id => {
                 const m = enabledMappings[id];
-                const source = m.isStaticOption 
-                    ? `<font color="#34a853">${m.selectedOption || 'Value'}</font>`
-                    : `<font color="#4285f4">Email ${m.emailField}</font>`;
-                html += `• <b>${m.notionPropertyName}</b> ← ${source}<br/>`;
+                const value = this._getMappingValueSnippet(m, emailData, null);
+                const display = value ? `<font color="#34a853">${value}</font>` : '<i>Value</i>';
+                html += `• <b>${m.notionPropertyName}</b> ← ${display}<br/>`;
             });
             section.addWidget(this.textParagraph(html));
         } else {
@@ -887,6 +1410,139 @@ _buildEmailDetailsSection(messageId, status) {
         }
 
         return section;
+    }
+
+    /**
+     * Build attachment mapping summary section
+     * @private
+     * @param {string} messageId
+     * @returns {CardService.CardSection|null}
+     */
+    _buildAttachmentMappingSummarySection(messageId) {
+        try {
+            const section = this.sectionWithHeader('📋 Attachment Mappings');
+            const attachmentMappingRepo = this.container.resolve('attachmentMappingRepo');
+            const enabledMappings = attachmentMappingRepo.getEnabled();
+            const mappingKeys = Object.keys(enabledMappings);
+
+            const config = this.configRepo.getAll();
+            const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Attachment DB';
+            section.addWidget(this.textParagraph(`Database: <b>${attachmentDbName}</b>`));
+
+            if (mappingKeys.length > 0) {
+                let html = '<b>Enabled Mappings:</b><br/>';
+                mappingKeys.forEach(id => {
+                    const m = enabledMappings[id];
+                    const sourceValue = this._getAttachmentMappingValueSnippet(
+                        m,
+                        messageId
+                      );
+                    const display = sourceValue
+                      ? `<font color="#34a853">${sourceValue}</font>`
+                      : '<i>Value</i>';
+                    html += `• <b>${m.notionPropertyName}</b> ← ${display}<br/>`;
+                });
+                section.addWidget(this.textParagraph(html));
+            } else {
+                section.addWidget(this.textParagraph('<i>No attachment fields mapped yet.</i>'));
+            }
+
+            return section;
+        } catch (error) {
+            this.logger.warn('Failed to build attachment mapping summary', error);
+            return null;
+        }
+    }
+
+    /**
+     * Format mapping source label for preview
+     * @private
+     */
+    _formatMappingSourceLabel(fieldValue, registry, isAttachmentField) {
+        if (!fieldValue) return 'Value';
+        const fields = registry && typeof registry.getAllFields === 'function'
+            ? registry.getAllFields()
+            : [];
+        const match = fields.find(f => f.value === fieldValue);
+        if (match && match.label) {
+            const label = String(match.label).replace(/^[^\w]+/g, '').trim();
+            return isAttachmentField ? label : `Email ${label}`;
+        }
+        return isAttachmentField ? fieldValue : `Email ${fieldValue}`;
+    }
+
+    /**
+     * Get mapping value snippet for preview
+     * @private
+     */
+    _getMappingValueSnippet(mapping, emailData, attachmentData) {
+        if (mapping.isStaticOption && mapping.selectedOption) {
+            return mapping.selectedOption;
+        }
+
+        if (mapping.type === 'people' && Array.isArray(mapping.selectedUserIds)) {
+            return `People (${mapping.selectedUserIds.length})`;
+        }
+
+        if (mapping.type === 'relation' && Array.isArray(mapping.selectedPages)) {
+            const names = mapping.selectedPages.map(p => p.title).filter(Boolean);
+            return names.length > 0 ? names.slice(0, 3).join(', ') : 'Relation';
+        }
+
+        const sourceData = attachmentData || emailData;
+        if (!sourceData || !mapping.emailField) return '';
+
+        const value = sourceData.getValue(mapping.emailField);
+        return this._formatValueSnippet(value);
+    }
+
+    /**
+     * Get attachment mapping value snippet using selected attachment
+     * @private
+     */
+    _getAttachmentMappingValueSnippet(mapping, messageId) {
+        const extracted = messageId ? this._extractEmailData(messageId) : null;
+        const emailData = extracted ? extracted.emailData : null;
+        if (!emailData) return this._getMappingValueSnippet(mapping, null, null);
+
+        const attachments = this._getAttachmentsForMessage(messageId, emailData);
+        const attachmentService = this.container.resolve('attachmentService');
+        const selectedNames = attachmentService.getSelectedAttachmentNames(messageId);
+        const selected = selectedNames.length > 0
+            ? attachments.find(att => selectedNames.includes(att.getName()))
+            : attachments[0];
+
+        const attachmentData = selected ? new AttachmentData(emailData, selected, { attachmentIndex: 0 }) : null;
+        return this._getMappingValueSnippet(mapping, emailData, attachmentData);
+    }
+
+    /**
+     * Format value snippet for preview
+     * @private
+     */
+    _formatValueSnippet(value) {
+        if (value === null || value === undefined) return '';
+        if (value instanceof Date) return value.toLocaleString();
+
+        if (Array.isArray(value)) {
+            const items = value.map(v => {
+                if (v && typeof v.getName === 'function') return v.getName();
+                return String(v);
+            }).filter(Boolean);
+            return items.slice(0, 3).join(', ');
+        }
+
+        if (typeof value === 'object') {
+            try {
+                const text = JSON.stringify(value);
+                return text.length > 60 ? text.substring(0, 57) + '...' : text;
+            } catch (e) {
+                return '';
+            }
+        }
+
+        const text = String(value);
+        return text.length > 60 ? text.substring(0, 57) + '...' : text;
     }
 
     /**

@@ -11,12 +11,15 @@ class MappingRepository {
   /**
    * @param {ConfigRepository} configRepo - Configuration repository
    * @param {Logger} logger - Logger instance
+   * @param {string} [storageKey='mappings'] - Config key name to store mappings
    */
-  constructor(configRepo, logger) {
+  constructor(configRepo, logger, storageKey = 'mappings') {
     /** @private */
     this._configRepo = configRepo;
     /** @private */
     this._logger = logger;
+    /** @private */
+    this._storageKey = storageKey;
   }
 
   /**
@@ -26,7 +29,7 @@ class MappingRepository {
   getAll() {
     try {
       const config = this._configRepo.getAll();
-      const mappingsStr = config.mappings || '{}';
+      const mappingsStr = config[this._storageKey] || '{}';
       
       return JSON.parse(mappingsStr);
     } catch (error) {
@@ -53,7 +56,7 @@ class MappingRepository {
   saveAll(mappings) {
     try {
       this._configRepo.set({
-        mappings: JSON.stringify(mappings)
+        [this._storageKey]: JSON.stringify(mappings)
       });
       
       this._logger.info('Mappings saved', { count: Object.keys(mappings).length });

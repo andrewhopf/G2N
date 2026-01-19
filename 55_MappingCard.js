@@ -13,8 +13,9 @@ class MappingCard {
    * @param {MappingRepository} mappingRepo
    * @param {PropertyHandlerFactory} handlerFactory
    * @param {Logger} logger
+   * @param {Object} [options]
    */
-  constructor(databaseService, mappingRepo, handlerFactory, logger) {
+  constructor(databaseService, mappingRepo, handlerFactory, logger, options = {}) {
     /** @private */
     this._database = databaseService;
     /** @private */
@@ -28,6 +29,24 @@ class MappingCard {
     /** @private */
     this._excludedPropertyNames = ['Gmail link', 'Gmail Link'];
     /** @private */this._maxWidgetsPerSection = 15; // New: Maximum widgets per card section
+    /** @private */
+    this._cardTitle = options.cardTitle || '📋 Map Email → Notion';
+    /** @private */
+    this._subtitlePrefix = options.subtitlePrefix || 'Database';
+    /** @private */
+    this._configActionName = options.configActionName || 'showG2NSettings';
+    /** @private */
+    this._configActionLabel = options.configActionLabel || '⚙️ Go to Settings';
+    /** @private */
+    this._retryActionName = options.retryActionName || 'showMappingsConfiguration';
+    /** @private */
+    this._saveNavigateActionName = options.saveNavigateActionName || 'saveAndNavigateMappingsPage';
+    /** @private */
+    this._cancelActionName = options.cancelActionName || 'cancelMappingsConfiguration';
+    /** @private */
+    this._finishActionName = options.finishActionName || 'finishMappingsConfiguration';
+    /** @private */
+    this._mappingScope = options.mappingScope || 'email';
   }
 
   /**
@@ -96,8 +115,8 @@ class MappingCard {
     const card = CardService.newCardBuilder()
       .setHeader(
         CardService.newCardHeader()
-          .setTitle('📋 Map Email → Notion')
-          .setSubtitle(`Database: ${schema.title}`)
+          .setTitle(this._cardTitle)
+          .setSubtitle(`${this._subtitlePrefix}: ${schema.title}`)
       );
 
     // Database info section
@@ -126,42 +145,59 @@ class MappingCard {
       );
   }
 
-  /**
-   * Build properties section with pagination
-   * @private
-  */
-  _buildPropertiesSection(properties, savedMappings, page) {
-    const section = CardService.newCardSection().setHeader('Property Mappings');
-    const totalPages = Math.ceil(properties.length / this._propertiesPerPage);
-    const startIdx = page * this._propertiesPerPage;
-    const endIdx = Math.min(startIdx + this._propertiesPerPage, properties.length);
-    const pageProperties = properties.slice(startIdx, endIdx);
+/**
+ * Build properties section with pagination
+ * @private
+ */
+_buildPropertiesSection(properties, savedMappings, page) {
+  const section = CardService.newCardSection()
+    .setHeader('Property Mappings');
 
-    // Build UI for each property
-    pageProperties.forEach((property, idx) => {
-      const mapping = savedMappings[property.id] || {};
-      const handler = this._handlers.getHandler(property.type);
+  const totalPages = Math.ceil(properties.length / this._propertiesPerPage);
+  const startIdx = page * this._propertiesPerPage;
+  const endIdx = Math.min(startIdx + this._propertiesPerPage, properties.length);
+  const pageProperties = properties.slice(startIdx, endIdx);
 
-      // ✅ ONLY render if handler exists
-      if (handler) {
-        try {
-          const widgets = handler.buildUI(property, mapping, page);
-          widgets.forEach(widget => section.addWidget(widget));
-        } catch (error) {
-          this._logger.warn('Handler error', {
-            property: property.name,
-            error: error.message
-          });
-          section.addWidget(this._createFallbackUI(property));
-        }
+  // Build UI for each property
+  pageProperties.forEach((property, idx) => {
+    const mapping = savedMappings[property.id] || {};
+    const handler = this._handlers.getHandler(property.type);
 
-        // Add divider between properties (not after last)
-        if (idx < pageProperties.length - 1) {
-          section.addWidget(CardService.newDivider());
-        }
+    // 🔧 FIX: Try to get handler (triggers lazy registration)
+    if (handler) {
+      try {
+        const widgets = handler.buildUI(property, mapping, page, this._mappingScope);
+        widgets.forEach(widget => section.addWidget(widget));
+      } catch (error) {
+        this._logger.warn('Handler error', {
+          property: property.name,
+          error: error.message
+        });
+        section.addWidget(this._createFallbackUI(property));
       }
-      // ✅ Properties without handlers are completely skipped
-    });
+    } 
+    // 🔧 FIX: Show informative message for files properties
+    else if (property.type === 'files') {
+      section.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<b>${property.name}</b> <font color="#4285F4">(Files/Attachments)</font>`)
+      );
+      section.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<i>✅ Attachments are handled automatically during save.</i>`)
+      );
+      section.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<font color="#5F6368">Use the "📎 Select Attachments" button when previewing an email to choose which files to upload.</font>`)
+      );
+    }
+    // Other unmappable types are skipped silently
+
+    // Add divider between properties
+    if (idx < pageProperties.length - 1) {
+      section.addWidget(CardService.newDivider());
+    }
+  });
 
     // Pagination info
     section.addWidget(CardService.newDivider());
@@ -180,7 +216,7 @@ class MappingCard {
           .setText('◀ Previous')
           .setOnClickAction(
             CardService.newAction()
-              .setFunctionName('saveAndNavigateMappingsPage')
+              .setFunctionName(this._saveNavigateActionName)
               .setParameters({ 
                 targetPage: String(page - 1), 
                 currentPage: String(page) 
@@ -196,7 +232,7 @@ class MappingCard {
           .setText('Next ▶')
           .setOnClickAction(
             CardService.newAction()
-              .setFunctionName('saveAndNavigateMappingsPage')
+              .setFunctionName(this._saveNavigateActionName)
               .setParameters({ 
                 targetPage: String(page + 1), 
                 currentPage: String(page) 
@@ -218,7 +254,7 @@ class MappingCard {
         .setText('✖ Cancel')
         .setOnClickAction(
           CardService.newAction()
-            .setFunctionName('cancelMappingsConfiguration')
+            .setFunctionName(this._cancelActionName)
         )
     );
 
@@ -230,7 +266,7 @@ class MappingCard {
         .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
         .setOnClickAction(
           CardService.newAction()
-            .setFunctionName('finishMappingsConfiguration')
+            .setFunctionName(this._finishActionName)
             .setParameters({ currentPage: String(page) })
         )
     );
@@ -271,10 +307,10 @@ class MappingCard {
             CardService.newButtonSet()
               .addButton(
                 CardService.newTextButton()
-                  .setText('⚙️ Go to Settings')
+                  .setText(this._configActionLabel)
                   .setOnClickAction(
                     CardService.newAction()
-                      .setFunctionName('showG2NSettings')
+                      .setFunctionName(this._configActionName)
                   )
               )
           )
@@ -305,7 +341,7 @@ class MappingCard {
                   .setText('🔄 Retry')
                   .setOnClickAction(
                     CardService.newAction()
-                      .setFunctionName('showMappingsConfiguration')
+                      .setFunctionName(this._retryActionName)
                   )
               )
           )

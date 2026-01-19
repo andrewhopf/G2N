@@ -21,7 +21,7 @@ class RelationPropertyHandler extends BasePropertyHandler {
   /**
    * @inheritdoc
    */
-buildUI(property, currentConfig, page = 0) { // Added page argument
+buildUI(property, currentConfig, page = 0, mappingScope = 'email') { // Added page argument
   const widgets = [];
   const propId = property.id;
   const relatedDbId = this._extractRelatedDatabaseId(property.config);
@@ -83,7 +83,8 @@ buildUI(property, currentConfig, page = 0) { // Added page argument
                 propertyId: propId,
                 propertyName: property.name,
                 databaseId: relatedDbId,
-                returnPage: String(page) // Pass the page number to the search function
+                returnPage: String(page), // Pass the page number to the search function
+                mappingScope: mappingScope
               })
           )
       );
@@ -111,8 +112,8 @@ buildUI(property, currentConfig, page = 0) { // Added page argument
             .setText('🗑️ Clear Selection')
             .setOnClickAction(
               CardService.newAction()
-                .setFunctionName('clearRelationSelection')
-                .setParameters({ propertyId: propId })
+              .setFunctionName('clearRelationSelection')
+              .setParameters({ propertyId: propId, mappingScope: mappingScope })
             )
         );
         widgets.push(clearButton);
@@ -136,7 +137,7 @@ buildUI(property, currentConfig, page = 0) { // Added page argument
   /**
    * @inheritdoc
    */
-  processConfiguration(property, formInput) {
+  processConfiguration(property, formInput, mappingScope = 'email') {
     const propId = property.id;
     const isEnabled = formInput[`relation_enabled_${propId}`] === 'true';
     const searchQuery = formInput[`relation_search_${propId}`] || '';
@@ -145,7 +146,8 @@ buildUI(property, currentConfig, page = 0) { // Added page argument
     let selectedPages = [];
     try {
       const props = PropertiesService.getUserProperties();
-      const mappingsStr = props.getProperty('G2N_MAPPINGS');
+      const mappingsKey = mappingScope === 'attachment' ? 'G2N_ATTACHMENT_MAPPINGS' : 'G2N_MAPPINGS';
+      const mappingsStr = props.getProperty(mappingsKey);
       if (mappingsStr) {
         const mappings = JSON.parse(mappingsStr);
         if (mappings[propId]?.selectedPages) {
@@ -251,8 +253,13 @@ function searchRelationPages(event) {
   const c = appInstance.getContainer();
   console.log('searchRelationPages services:', c.getRegisteredServices());
 
+  const mappingScope = event.parameters?.mappingScope || 'email';
   if (event.formInput) {
-    _saveMappingsFromForm(event.formInput);
+    if (mappingScope === 'attachment') {
+      _saveAttachmentMappingsFromForm(event.formInput);
+    } else {
+      _saveMappingsFromForm(event.formInput);
+    }
   }
 
   const propId = event.parameters.propertyId;
@@ -340,7 +347,8 @@ function searchRelationPages(event) {
               propertyId: propId,
               propertyName: propName,
               databaseId: databaseId,
-              returnPage: returnPage
+              returnPage: returnPage,
+              mappingScope: mappingScope
             })
         )
     );
@@ -350,7 +358,7 @@ function searchRelationPages(event) {
         .setText('🔙 Back')
         .setOnClickAction(
           CardService.newAction()
-            .setFunctionName('showMappingsConfiguration')
+            .setFunctionName(mappingScope === 'attachment' ? 'showAttachmentMappingsConfiguration' : 'showMappingsConfiguration')
             .setParameters({ targetPage: returnPage })
         )
     );
@@ -382,6 +390,7 @@ function saveRelationSelection(event) {
   const propName = event.parameters.propertyName;
   // Get the page number we came from (default to 0)
   const returnPage = parseInt(event.parameters.returnPage || "0", 10);
+  const mappingScope = event.parameters?.mappingScope || 'email';
   const formValue = event.formInput ? event.formInput[`relation_selected_pages_${propId}`] : [];
 
   try {
@@ -407,7 +416,8 @@ function saveRelationSelection(event) {
 
     // Save to mappings repository
     const props = PropertiesService.getUserProperties();
-    const mappingsStr = props.getProperty('G2N_MAPPINGS') || '{}';
+    const mappingsKey = mappingScope === 'attachment' ? 'G2N_ATTACHMENT_MAPPINGS' : 'G2N_MAPPINGS';
+    const mappingsStr = props.getProperty(mappingsKey) || '{}';
     const mappings = JSON.parse(mappingsStr);
 
     if (mappings[propId]) {
@@ -415,7 +425,11 @@ function saveRelationSelection(event) {
       mappings[propId].enabled = true;
     }
 
-    props.setProperty('G2N_MAPPINGS', JSON.stringify(mappings));
+    props.setProperty(mappingsKey, JSON.stringify(mappings));
+
+    const updatedCard = mappingScope === 'attachment'
+      ? buildAttachmentMappingsCard(returnPage)
+      : buildMappingsCard(returnPage);
 
     return CardService.newActionResponseBuilder()
       .setNotification(
@@ -426,7 +440,7 @@ function saveRelationSelection(event) {
         CardService.newNavigation()
           .popCard() // Remove selection card
           .popCard() // Remove search card
-          .updateCard(buildMappingsCard(returnPage)) // REFRESH the mapping card at the CORRECT page
+          .updateCard(updatedCard) // REFRESH the mapping card at the CORRECT page
       )
       .build();
 
@@ -447,10 +461,12 @@ function saveRelationSelection(event) {
  */
 function clearRelationSelection(event) {
   const propId = event.parameters.propertyId;
+  const mappingScope = event.parameters?.mappingScope || 'email';
 
   try {
     const props = PropertiesService.getUserProperties();
-    const mappingsStr = props.getProperty('G2N_MAPPINGS') || '{}';
+    const mappingsKey = mappingScope === 'attachment' ? 'G2N_ATTACHMENT_MAPPINGS' : 'G2N_MAPPINGS';
+    const mappingsStr = props.getProperty(mappingsKey) || '{}';
     const mappings = JSON.parse(mappingsStr);
 
     if (mappings[propId]) {
@@ -458,11 +474,15 @@ function clearRelationSelection(event) {
       mappings[propId].enabled = false;
     }
 
-    props.setProperty('G2N_MAPPINGS', JSON.stringify(mappings));
+    props.setProperty(mappingsKey, JSON.stringify(mappings));
+
+    const updatedCard = mappingScope === 'attachment'
+      ? buildAttachmentMappingsCard()
+      : buildMappingsCard();
 
     return CardService.newActionResponseBuilder()
       .setNotification(CardService.newNotification().setText('✅ Selection cleared'))
-      .setNavigation(CardService.newNavigation().updateCard(buildMappingsCard()))
+      .setNavigation(CardService.newNavigation().updateCard(updatedCard))
       .build();
 
   } catch (error) {

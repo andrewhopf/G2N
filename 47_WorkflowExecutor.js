@@ -9,14 +9,17 @@ class WorkflowExecutor {
      * @constructor
      * @param {EmailService} emailService - Email service
      * @param {PageService} pageService - Page service
+     * @param {AttachmentPageService} attachmentPageService - Attachment page service
      * @param {EventEmitter} events - Event emitter
      * @param {Logger} logger - Logger instance
      */
-    constructor(emailService, pageService, events, logger) {
+    constructor(emailService, pageService, attachmentPageService, events, logger) {
         /** @private */
         this._email = emailService;
         /** @private */
         this._pageService = pageService;
+        /** @private */
+        this._attachmentPageService = attachmentPageService;
         /** @private */
         this._events = events;
         /** @private */
@@ -71,6 +74,18 @@ class WorkflowExecutor {
             this._events.emit(AppEvents.PAGE_CREATED, page);
             this._logger.info('✅ Page created successfully', { url: page.url });
             
+            // ========== STEP 3: Save Attachments (if configured) ==========
+            let attachmentResult = { created: 0, skipped: 0, pages: [] };
+            try {
+                attachmentResult = this._attachmentPageService.createPagesFromEmail(emailData);
+                this._logger.info('✅ Attachments saved', {
+                    created: attachmentResult.created,
+                    skipped: attachmentResult.skipped
+                });
+            } catch (attachError) {
+                this._logger.warn('Attachment save failed (non-fatal)', attachError);
+            }
+
             const duration = Date.now() - startTime;
             this._events.emit(AppEvents.WORKFLOW_COMPLETED, { page, duration });
             
@@ -79,7 +94,8 @@ class WorkflowExecutor {
                 pageUrl: page.url,
                 emailId: messageId,
                 subject: emailData.subject,
-                isDuplicate: false
+                isDuplicate: false,
+                attachmentsSaved: attachmentResult.created || 0
             });
             
         } catch (error) {

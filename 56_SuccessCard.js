@@ -34,6 +34,30 @@ class SuccessCard {
       );
     }
 
+    if (typeof result.attachmentsSaved === 'number') {
+      successSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<b>Attachments saved:</b> ${result.attachmentsSaved}`)
+      );
+    }
+
+    try {
+      const attachmentService = container.resolve('attachmentService');
+      const last = attachmentService.getLastUploadedAttachments();
+      if (last && last.uploaded && last.uploaded.length > 0) {
+        const links = last.uploaded
+          .filter(f => f && f.url)
+          .map(f => `<a href="${f.url}">${Utils.escapeHtml(f.name || 'Attachment')}</a>`)
+          .join('<br/>');
+        successSection.addWidget(
+          CardService.newTextParagraph()
+            .setText(`<b>Uploaded Files:</b><br/>${links}`)
+        );
+      }
+    } catch (e) {
+      // Non-fatal; keep success card minimal if lookup fails.
+    }
+
     // Keep the text link as requested, removing the separate button later
     if (result.pageUrl) {
       successSection.addWidget(

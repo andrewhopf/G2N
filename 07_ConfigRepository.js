@@ -22,6 +22,10 @@ class ConfigRepository {
       databaseId: '',
       databaseName: '',
       mappings: '{}',
+      attachmentDatabaseId: '',
+      attachmentDatabaseName: '',
+      attachmentMappings: '{}',
+      filesPropertyName: 'Attachments',
       fileHandling: 'upload_to_drive',
       autoSave: 'false',
       notifications: 'true'
@@ -32,6 +36,10 @@ class ConfigRepository {
       databaseId: 'G2N_DATABASE_ID',
       databaseName: 'G2N_DATABASE_NAME',
       mappings: 'G2N_MAPPINGS',
+      attachmentDatabaseId: 'G2N_ATTACHMENT_DATABASE_ID',
+      attachmentDatabaseName: 'G2N_ATTACHMENT_DATABASE_NAME',
+      attachmentMappings: 'G2N_ATTACHMENT_MAPPINGS',
+      filesPropertyName: 'G2N_FILES_PROPERTY_NAME',
       fileHandling: 'G2N_FILE_HANDLING',
       autoSave: 'G2N_AUTO_SAVE',
       notifications: 'G2N_NOTIFICATIONS'
@@ -62,6 +70,10 @@ class ConfigRepository {
         databaseId: props[this._keys.databaseId] || this._defaults.databaseId,
         databaseName: props[this._keys.databaseName] || this._defaults.databaseName,
         mappings: props[this._keys.mappings] || this._defaults.mappings,
+        attachmentDatabaseId: props[this._keys.attachmentDatabaseId] || this._defaults.attachmentDatabaseId,
+        attachmentDatabaseName: props[this._keys.attachmentDatabaseName] || this._defaults.attachmentDatabaseName,
+        attachmentMappings: props[this._keys.attachmentMappings] || this._defaults.attachmentMappings,
+        filesPropertyName: props[this._keys.filesPropertyName] || this._defaults.filesPropertyName,
         fileHandling: props[this._keys.fileHandling] || this._defaults.fileHandling,
         autoSave: props[this._keys.autoSave] === 'true',
         notifications: props[this._keys.notifications] !== 'false'

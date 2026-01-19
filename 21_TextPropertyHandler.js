@@ -45,7 +45,8 @@ class TextPropertyHandler extends BasePropertyHandler {
     }
 
     // Gmail field dropdown
-    const fieldDropdown = this._createFieldDropdown(propId, currentConfig.emailField || '');
+    const defaultField = this._fieldRegistry.getRecommendedField(this._type) || '';
+    const fieldDropdown = this._createFieldDropdown(propId, currentConfig.emailField || defaultField);
     widgets.push(fieldDropdown);
 
     // Transformation dropdown
@@ -112,11 +113,23 @@ class TextPropertyHandler extends BasePropertyHandler {
       .setFieldName(`emailField_${propId}`)
       .setTitle('Email Source');
 
-    dropdown.addItem('-- Select field --', '', !currentValue);
-
     const fields = this._fieldRegistry.getFieldsForType(this._type);
+    let selectedValue = currentValue;
+    const hasSelected = fields.some(field => field.value === selectedValue);
+    if (!selectedValue || !hasSelected) {
+      selectedValue = this._fieldRegistry.getRecommendedField(this._type);
+    }
+    const hasRecommended = fields.some(field => field.value === selectedValue);
+    if (!selectedValue || !hasRecommended) {
+      selectedValue = fields.length > 0 ? fields[0].value : '';
+    }
+
+    if (!selectedValue) {
+      dropdown.addItem('-- Select field --', '', true);
+    }
+
     fields.forEach(field => {
-      dropdown.addItem(field.label, field.value, currentValue === field.value);
+      dropdown.addItem(field.label, field.value, selectedValue === field.value);
     });
 
     return dropdown;

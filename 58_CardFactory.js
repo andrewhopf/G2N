@@ -22,7 +22,11 @@ class CardFactory {
    */
   createHomepage() {
     const databaseService = this._container.resolve('databaseService');
+    const attachmentDatabaseService = this._container.resolve('attachmentDatabaseService');
+    const attachmentMappingRepo = this._container.resolve('attachmentMappingRepo');
+    const attachmentService = this._container.resolve('attachmentService');
     const status = databaseService.getStatus();
+    const attachmentStatus = attachmentDatabaseService.getStatus();
 
     const card = CardService.newCardBuilder()
       .setHeader(
@@ -51,6 +55,37 @@ class CardFactory {
       );
 
     card.addSection(statusSection);
+
+    // Attachment summary section
+    const attachmentSection = CardService.newCardSection()
+      .setHeader('📎 Attachment Mappings');
+
+    attachmentSection.addWidget(
+      CardService.newKeyValue()
+        .setTopLabel('Attachment DB')
+        .setContent(attachmentStatus.hasDatabaseId ? `✅ ${attachmentStatus.databaseName}` : '❌ Not selected')
+    );
+
+    const lastSelection = attachmentService.getLastSelectionSummary();
+    const selectionText = lastSelection
+      ? `${lastSelection.selectedCount}/${lastSelection.totalCount} selected`
+      : 'No selection yet';
+
+    attachmentSection.addWidget(
+      CardService.newKeyValue()
+        .setTopLabel('Attachments Selected')
+        .setContent(selectionText)
+    );
+
+    attachmentSection.addWidget(
+      CardService.newKeyValue()
+        .setTopLabel('Attachment Mappings')
+        .setContent(attachmentMappingRepo.getEnabledCount() > 0
+          ? `✅ ${attachmentMappingRepo.getEnabledCount()} configured`
+          : '❌ Not configured')
+    );
+
+    card.addSection(attachmentSection);
 
     // Action section based on status
     if (status.isReady) {
@@ -168,6 +203,7 @@ class CardFactory {
     const configRepo = this._container.resolve('configRepo');
     const config = configRepo.getAll();
     const databaseService = this._container.resolve('databaseService');
+    const attachmentMappingRepo = this._container.resolve('attachmentMappingRepo');
     const status = databaseService.getStatus();
 
     const card = CardService.newCardBuilder()
@@ -246,7 +282,75 @@ class CardFactory {
       );
     }
 
+    // Attachments section
+    const attachmentsSection = CardService.newCardSection()
+      .setHeader('📎 Attachment Mappings');
+
+    if (status.hasApiKey && status.hasDatabaseId) {
+      const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Selected';
+      const fileHandling = config.fileHandling || 'upload_to_drive';
+      const filesPropertyName = config.filesPropertyName || 'Attachments';
+
+      let handlingText = 'Upload to Drive';
+      if (fileHandling === 'link_only') handlingText = 'Link only';
+      if (fileHandling === 'skip') handlingText = 'Skip';
+
+      attachmentsSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(`Attachment DB: <b>${attachmentDbName}</b>`)
+      );
+      attachmentsSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(attachmentMappingRepo.getEnabledCount() > 0
+            ? `${attachmentMappingRepo.getEnabledCount()} mappings configured`
+            : 'Not configured')
+      );
+      attachmentsSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(`File Handling: <b>${handlingText}</b>`)
+      );
+      attachmentsSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(`Files Property: <b>${filesPropertyName}</b>`)
+      );
+    } else {
+      attachmentsSection.addWidget(
+        CardService.newTextParagraph()
+          .setText('<font color="#FF6B6B">⚠️ Configure Notion connection first</font>')
+      );
+    }
+
+    attachmentsSection.addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText('📎 Configure Attachments')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('showAttachmentMappingsConfiguration')
+            )
+        )
+        .addButton(
+          CardService.newTextButton()
+            .setText('⚙️ Attachment Settings')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('showAttachmentsConfiguration')
+            )
+        )
+    );
+
+    card.addSection(attachmentsSection);
+
     // Actions
+    let reauthUrl = '';
+    try {
+      const authInfo = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL);
+      reauthUrl = authInfo ? authInfo.getAuthorizationUrl() : '';
+    } catch (e) {
+      reauthUrl = '';
+    }
+
     card.addSection(
       CardService.newCardSection()
         .addWidget(
@@ -257,6 +361,14 @@ class CardFactory {
                 .setOnClickAction(
                   CardService.newAction()
                     .setFunctionName('saveConfiguration')
+                )
+            )
+            .addButton(
+              CardService.newTextButton()
+                .setText('🔐 Reauthorize')
+                .setOnClickAction(
+                  CardService.newAction()
+                    .setFunctionName('forceDriveAuthorization')
                 )
             )
             .addButton(
