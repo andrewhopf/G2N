@@ -679,6 +679,18 @@ class AttachmentService {
   }
 
   /**
+   * Clear last uploaded attachments summary
+   */
+  clearLastUploadedAttachments() {
+    try {
+      const props = PropertiesService.getUserProperties();
+      props.deleteProperty('G2N_LAST_UPLOADED_ATTACHMENTS');
+    } catch (error) {
+      this._logger.warn('Failed to clear uploaded attachments summary', { error: error.message });
+    }
+  }
+
+  /**
    * Get last attachment selection summary
    * @returns {{messageId: string, selectedCount: number, totalCount: number}|null}
    */

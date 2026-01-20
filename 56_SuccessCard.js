@@ -34,7 +34,12 @@ class SuccessCard {
       );
     }
 
-    if (typeof result.attachmentsSaved === 'number') {
+    if (typeof result.attachmentsSavedText === 'string') {
+      successSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<b>Attachments saved:</b> ${Utils.escapeHtml(result.attachmentsSavedText)}`)
+      );
+    } else if (typeof result.attachmentsSaved === 'number') {
       successSection.addWidget(
         CardService.newTextParagraph()
           .setText(`<b>Attachments saved:</b> ${result.attachmentsSaved}`)
@@ -42,9 +47,38 @@ class SuccessCard {
     }
 
     try {
+      const configRepo = container.resolve('configRepo');
+      const config = configRepo.getAll();
+      const mappingRepo = container.resolve('mappingRepo');
+      const enabledEmailMappings = mappingRepo.getEnabledCount();
+      successSection.addWidget(
+        CardService.newTextParagraph()
+          .setText(`<b>Email mappings enabled:</b> ${enabledEmailMappings}`)
+      );
+
+      if (config.attachmentUseSeparateDatabase) {
+        const attachmentMappingRepo = container.resolve('attachmentMappingRepo');
+        const enabledAttachmentMappings = attachmentMappingRepo.getEnabledCount();
+        successSection.addWidget(
+          CardService.newTextParagraph()
+            .setText(`<b>Attachment mappings enabled:</b> ${enabledAttachmentMappings}`)
+        );
+      }
+    } catch (e) {
+      // Non-fatal; keep success card minimal if lookup fails.
+    }
+
+    try {
       const attachmentService = container.resolve('attachmentService');
       const last = attachmentService.getLastUploadedAttachments();
       if (last && last.uploaded && last.uploaded.length > 0) {
+        const expectedIds = [];
+        if (result.selectionKey) expectedIds.push(result.selectionKey);
+        if (result.emailId) expectedIds.push(result.emailId);
+        if (expectedIds.length > 0 && last.messageId && !expectedIds.includes(last.messageId)) {
+          return card.build();
+        }
+
         const links = last.uploaded
           .filter(f => f && f.url)
           .map(f => `<a href="${f.url}">${Utils.escapeHtml(f.name || 'Attachment')}</a>`)
@@ -53,6 +87,7 @@ class SuccessCard {
           CardService.newTextParagraph()
             .setText(`<b>Uploaded Files:</b><br/>${links}`)
         );
+        attachmentService.clearLastUploadedAttachments();
       }
     } catch (e) {
       // Non-fatal; keep success card minimal if lookup fails.

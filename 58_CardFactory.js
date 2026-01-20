@@ -28,6 +28,7 @@ class CardFactory {
     const status = databaseService.getStatus();
     const attachmentStatus = attachmentDatabaseService.getStatus();
 
+    const recentlySaved = this._wasSettingsJustSaved();
     const card = CardService.newCardBuilder()
       .setHeader(
         CardService.newCardHeader()
@@ -205,6 +206,7 @@ class CardFactory {
     const databaseService = this._container.resolve('databaseService');
     const attachmentMappingRepo = this._container.resolve('attachmentMappingRepo');
     const status = databaseService.getStatus();
+    const recentlySaved = this._wasSettingsJustSaved();
 
     const card = CardService.newCardBuilder()
       .setHeader(
@@ -388,7 +390,15 @@ class CardFactory {
                   CardService.newAction()
                     .setFunctionName('saveConfiguration')
                 )
+                .setTextButtonStyle(
+                  recentlySaved ? CardService.TextButtonStyle.FILLED : CardService.TextButtonStyle.TEXT
+                )
+                .setBackgroundColor(recentlySaved ? '#0F9D58' : null)
             )
+        )
+        .addWidget(CardService.newDivider())
+        .addWidget(
+          CardService.newButtonSet()
             .addButton(
               CardService.newTextButton()
                 .setText('🔐 Reauthorize')
@@ -405,6 +415,10 @@ class CardFactory {
                     .setFunctionName('testNotionConnection')
                 )
             )
+        )
+        .addWidget(CardService.newDivider())
+        .addWidget(
+          CardService.newButtonSet()
             .addButton(
               CardService.newTextButton()
                 .setText('↩️ Back to Preview')
@@ -417,6 +431,26 @@ class CardFactory {
     );
 
     return card.build();
+  }
+
+  /**
+   * Check if settings were just saved
+   * @private
+   * @returns {boolean}
+   */
+  _wasSettingsJustSaved() {
+    try {
+      const props = PropertiesService.getUserProperties();
+      const raw = props.getProperty('G2N_SETTINGS_SAVED_AT');
+      if (!raw) return false;
+      const savedAt = parseInt(raw, 10);
+      if (!savedAt) return false;
+      const isRecent = Date.now() - savedAt < 15000;
+      props.deleteProperty('G2N_SETTINGS_SAVED_AT');
+      return isRecent;
+    } catch (error) {
+      return false;
+    }
   }
 
   /**

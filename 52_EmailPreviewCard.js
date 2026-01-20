@@ -765,10 +765,17 @@ _buildAttachmentMappingWarning(messageId) {
  */
 _buildAttachmentUploadSection(messageId) {
   try {
+    if (!messageId) return null;
+    const extracted = this._extractEmailData(messageId);
+    const emailData = extracted ? extracted.emailData : null;
+    const attachments = this._getAttachmentsForMessage(messageId, emailData);
+    if (!attachments || attachments.length === 0) return null;
+
+    const selectionKey = this._getSelectionKey(messageId, emailData);
     const attachmentService = this.container.resolve('attachmentService');
     const last = attachmentService.getLastUploadedAttachments();
     if (!last || !last.uploaded || last.uploaded.length === 0) return null;
-    if (last.messageId && messageId && last.messageId !== messageId) return null;
+    if (last.messageId && selectionKey && last.messageId !== selectionKey) return null;
 
     const section = CardService.newCardSection()
       .setHeader('📂 Uploaded Attachments');

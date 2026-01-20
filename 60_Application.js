@@ -69,6 +69,7 @@ quickG2NSaveEmail(event) {
         if (!hasSelection) {
           const successCard = buildSuccessCard({
             emailId: messageId,
+            selectionKey: selectionKey,
             subject: result.emailData.subject,
             pageUrl: result.page.url,
             attachmentsSaved: 0
@@ -104,12 +105,26 @@ quickG2NSaveEmail(event) {
           .build();
       }
 
-      const successCard = buildSuccessCard({
-        emailId: messageId,
-        subject: result.emailData.subject,
-        pageUrl: result.page.url,
-        attachmentsSaved: 0
-      });
+        const attachmentService = this._container.resolve('attachmentService');
+        const selectionKey = (result.emailData && result.emailData.messageId) || messageId;
+        const sourceAttachments = attachmentService.getAttachmentsForMessage(
+          messageId,
+          result.emailData ? result.emailData.attachments : []
+        );
+        const selected = attachmentService.filterSelectedAttachments(sourceAttachments, selectionKey);
+        const processed = attachmentService.getLastProcessedAttachments(selectionKey);
+        const savedCount = processed && Array.isArray(processed.processed) && processed.processed.length > 0
+          ? processed.processed.length
+          : selected.length;
+        const attachmentsSavedText = savedCount > 0 ? `${savedCount} to Email Page` : 'None saved';
+
+        const successCard = buildSuccessCard({
+          emailId: messageId,
+          selectionKey: selectionKey,
+          subject: result.emailData.subject,
+          pageUrl: result.page.url,
+          attachmentsSavedText: attachmentsSavedText
+        });
       return CardService.newActionResponseBuilder()
         .setNotification(
           CardService.newNotification().setText('✅ Saved to Notion!')

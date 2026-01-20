@@ -348,7 +348,13 @@ function saveConfiguration(event) {
     }
     
     configRepo.set(propertiesToSet);
-    
+    try {
+      const props = PropertiesService.getUserProperties();
+      props.setProperty('G2N_SETTINGS_SAVED_AT', String(Date.now()));
+    } catch (e) {
+      // non-fatal
+    }
+
     return CardService.newActionResponseBuilder()
       .setNotification(
         CardService.newNotification().setText(notificationText)
@@ -825,9 +831,11 @@ function finishAttachmentMappingsConfiguration(event) {
 
       const successCard = buildSuccessCard({
         emailId: pending.messageId,
+        selectionKey: emailData.messageId || pending.messageId,
         subject: pending.subject || emailData.subject,
         pageUrl: pending.pageUrl,
-        attachmentsSaved: attachmentResult.created
+        attachmentsSaved: attachmentResult.created,
+        attachmentsSavedText: `${attachmentResult.created} to DB ${config.attachmentDatabaseName || 'Attachment DB'}`
       });
 
       return CardService.newActionResponseBuilder()

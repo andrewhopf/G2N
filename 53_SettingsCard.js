@@ -12,6 +12,7 @@ class SettingsCard extends BaseCardRenderer {
     try {
       const config = this.configRepo.getAll();
       const status = this.databaseService.getStatus();
+      const recentlySaved = this._wasSettingsJustSaved();
 
       const header = this.buildHeader('⚙️ Settings', 'Configure Gmail to Notion');
 
@@ -133,18 +134,34 @@ if (config.attachmentUseSeparateDatabase) {
 
 sections.push(attachmentsSection);
 
+      const saveSection = CardService.newCardSection()
+        .setHeader('Save')
+        .addWidget(this.textParagraph('<b>Save settings</b> - persist API key and options'))
+        .addWidget(
+          this.buttonSet(
+            this.newButton('💾 Save', 'saveConfiguration', {}, {
+              backgroundColor: recentlySaved ? '#0F9D58' : undefined,
+              filled: recentlySaved
+            })
+          )
+        );
+      sections.push(saveSection);
+
       // === SECTION 5: Actions ===
       const actionsSection = CardService.newCardSection()
         .setHeader('Actions')
-        .addWidget(this.textParagraph('<b>Save settings</b> - persist API key and options'))
         .addWidget(this.textParagraph('<b>Reauthorize</b> - refresh Drive permissions'))
         .addWidget(this.textParagraph('<b>Test</b> - verify Notion connection'))
         .addWidget(CardService.newDivider())
         .addWidget(
           this.buttonSet(
-            this.newButton('💾 Save', 'saveConfiguration'),
             this.newButton('🔐 Reauthorize', 'forceDriveAuthorization'),
-            this.newButton('🧪 Test', 'testNotionConnection'),
+            this.newButton('🧪 Test', 'testNotionConnection')
+          )
+        )
+        .addWidget(CardService.newDivider())
+        .addWidget(
+          this.buttonSet(
             this.newButton('↩️ Back to Preview', 'onG2NGmailMessage')
           )
         );
@@ -177,6 +194,26 @@ sections.push(attachmentsSection);
           return false;
         }
       }
+
+  /**
+   * Check if settings were just saved
+   * @private
+   * @returns {boolean}
+   */
+  _wasSettingsJustSaved() {
+    try {
+      const props = PropertiesService.getUserProperties();
+      const raw = props.getProperty('G2N_SETTINGS_SAVED_AT');
+      if (!raw) return false;
+      const savedAt = parseInt(raw, 10);
+      if (!savedAt) return false;
+      const isRecent = Date.now() - savedAt < 15000;
+      props.deleteProperty('G2N_SETTINGS_SAVED_AT');
+      return isRecent;
+    } catch (error) {
+      return false;
+    }
+  }
 
 /** 
  * Get attachment configuration
