@@ -41,19 +41,6 @@ class FilesPropertyHandler extends BasePropertyHandler {
       );
     }
 
-    // File handling options
-    const handlingDropdown = CardService.newSelectionInput()
-      .setType(CardService.SelectionInputType.DROPDOWN)
-      .setFieldName(`fileHandling_${propId}`)
-      .setTitle('Attachment Handling');
-
-    const currentHandling = currentConfig.fileHandling || 'upload_to_drive';
-    handlingDropdown.addItem('Upload to Google Drive', 'upload_to_drive', currentHandling === 'upload_to_drive');
-    handlingDropdown.addItem('Link only (no upload)', 'link_only', currentHandling === 'link_only');
-    handlingDropdown.addItem('Skip attachments', 'skip', currentHandling === 'skip');
-
-    widgets.push(handlingDropdown);
-
     // Info text
     widgets.push(
       CardService.newTextParagraph()
@@ -81,7 +68,7 @@ class FilesPropertyHandler extends BasePropertyHandler {
       notionPropertyName: property.name,
       enabled: isEnabled,
       emailField: 'attachments',
-      fileHandling: formInput[`fileHandling_${propId}`] || 'upload_to_drive',
+      fileHandling: 'upload_to_drive',
       isStaticOption: false,
       isRequired: property.isRequired || false
     };
@@ -91,18 +78,6 @@ class FilesPropertyHandler extends BasePropertyHandler {
    * @inheritdoc
    */
   processForNotion(mapping, emailData, apiKey) {
-    if (!mapping.enabled) {
-      console.log('Files mapping disabled, skipping');
-      return null;
-    }
-    if (mapping.fileHandling === 'skip') {
-      console.log('Files mapping skipped by fileHandling');
-      return null;
-    }
-    if (mapping.fileHandling === 'link_only') {
-      console.log('Files mapping skipped by link_only');
-      return null;
-    }
     try {
       const sourceAttachments = this._attachments.getAttachmentsForMessage(
         emailData.messageId,
@@ -118,30 +93,97 @@ class FilesPropertyHandler extends BasePropertyHandler {
         return null;
       }
 
-      // Process attachments using the attachment service
-      const processedFiles = this._attachments.processAttachments(
-        attachments,
-        emailData.subject,
-        mapping.fileHandling
-      );
+      const handling = 'upload_to_drive';
+      let processedFiles = [];
+      let cachedFiles = [];
+      const cached = this._attachments.getLastProcessedAttachments(emailData.messageId);
+      if (cached && cached.handling === handling) {
+        cachedFiles = Array.isArray(cached.processed) ? cached.processed : [];
+      }
+
+      if (cachedFiles.length > 0) {
+        const matched = [];
+        const missing = [];
+        attachments.forEach(att => {
+          const match = this._attachments.findProcessedAttachment(
+            cachedFiles,
+            att.getName(),
+            att.getSize()
+          );
+          if (match) {
+            matched.push(match);
+          } else {
+            missing.push(att);
+          }
+        });
+
+        processedFiles = matched;
+
+        if (missing.length > 0) {
+          const newlyProcessed = this._attachments.processAttachments(
+            missing,
+            emailData.subject,
+            handling
+          );
+          if (newlyProcessed && newlyProcessed.length > 0) {
+            processedFiles = processedFiles.concat(newlyProcessed);
+            const merged = cachedFiles.concat(newlyProcessed.filter(file => {
+              return !this._attachments.findProcessedAttachment(cachedFiles, file.name, file.size);
+            }));
+            this._attachments.setLastProcessedAttachments(
+              emailData.messageId,
+              merged,
+              handling
+            );
+          }
+        }
+      } else {
+        // Process attachments using the attachment service
+        processedFiles = this._attachments.processAttachments(
+          attachments,
+          emailData.subject,
+          handling
+        );
+      }
 
       if (processedFiles.length === 0) return null;
+
+      this._attachments.setLastProcessedAttachments(
+        emailData.messageId,
+        processedFiles,
+        handling
+      );
 
       // Save upload info for preview/success display
       const uploadedSummary = processedFiles.map(file => ({
         name: file.name,
-        url: file.url,
+        url: file.downloadUrl || file.url,
         driveId: file.driveId || ''
       }));
       this._attachments.setLastUploadedAttachments(emailData.messageId, uploadedSummary);
 
       // Format for Notion files property
       return {
-        files: processedFiles.map(file => ({
-          name: file.name,
-          type: 'external',
-          external: { url: file.url }
-        }))
+        files: processedFiles.map(file => {
+          const displayName = file.sourceName || file.name;
+          if (mapping.fileHandling === 'upload_to_notion' && file.notionUploadId) {
+            return {
+              name: displayName,
+              type: 'file',
+              file: {
+                type: 'file_upload',
+                file_upload: { id: file.notionUploadId }
+              }
+            };
+          }
+
+          const externalUrl = file.downloadUrl || file.url || '';
+          return {
+            name: displayName,
+            type: 'external',
+            external: { url: externalUrl }
+          };
+        })
       };
 
     } catch (error) {

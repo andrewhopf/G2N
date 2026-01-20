@@ -24,7 +24,7 @@ class HomepageCard extends BaseCardRenderer {
       const statusSection = this.sectionWithHeader('📊 Status')
         .addWidget(this.keyValue('Notion Connection', status.hasApiKey ? '✅ Connected' : '❌ Not connected'))
         .addWidget(this.keyValue('Database', status.hasDatabaseId ? `✅ ${status.databaseName}` : '❌ Not selected'))
-        .addWidget(this.keyValue('Mappings', status.hasMappings ? `✅ ${status.enabledMappings} configured` : '❌ Not configured'));
+        .addWidget(this.keyValue('Email Mappings', status.hasMappings ? `✅ ${status.enabledMappings} configured` : '❌ Not configured'));
 
       const sections = [statusSection];
 
@@ -40,7 +40,7 @@ class HomepageCard extends BaseCardRenderer {
         const missing = [];
         if (!status.hasApiKey) missing.push('API Key');
         if (!status.hasDatabaseId) missing.push('Database');
-        if (!status.hasMappings) missing.push('Mappings');
+        if (!status.hasMappings) missing.push('Email Mappings');
 
         const setup = this.sectionWithHeader('🔧 Setup Required')
           .addWidget(this.textParagraph(`<b>Missing:</b> ${missing.join(', ')}`))

@@ -72,6 +72,61 @@ class NotionAdapter {
     }
 
     /**
+     * Create a Notion file upload ticket
+     * @param {string} filename
+     * @param {string} contentType
+     * @param {number} size
+     * @param {string} apiKey
+     * @returns {{id: string, upload_url: string}}
+     */
+    createFileUpload(filename, contentType, size, apiKey) {
+        const payload = {
+            filename: filename,
+            content_type: contentType || 'application/octet-stream',
+            file_size: size
+        };
+        const response = this.request('/file_uploads', 'POST', payload, apiKey);
+        return {
+            id: response.id,
+            upload_url: response.upload_url
+        };
+    }
+
+    /**
+     * Send file data to Notion upload URL (multipart/form-data)
+     * @param {string} uploadUrl
+     * @param {Blob} blob
+     */
+    sendFileUpload(uploadUrl, blob) {
+        const boundary = '----g2nUpload' + Utilities.getUuid();
+        const delimiter = '--' + boundary + '\r\n';
+        const close = '--' + boundary + '--';
+        const filename = blob.getName ? blob.getName() : 'file';
+        const contentType = blob.getContentType() || 'application/octet-stream';
+
+        const header = Utilities.newBlob(
+            delimiter +
+            'Content-Disposition: form-data; name="file"; filename="' + filename + '"\r\n' +
+            'Content-Type: ' + contentType + '\r\n\r\n'
+        ).getBytes();
+        const footer = Utilities.newBlob('\r\n' + close).getBytes();
+        const payload = header.concat(blob.getBytes(), footer);
+
+        const options = {
+            method: 'post',
+            contentType: 'multipart/form-data; boundary=' + boundary,
+            payload: payload,
+            muteHttpExceptions: true
+        };
+
+        const response = UrlFetchApp.fetch(uploadUrl, options);
+        const code = response.getResponseCode();
+        if (code < 200 || code >= 300) {
+            throw new Error('Notion upload failed: ' + response.getContentText());
+        }
+    }
+
+    /**
      * Search for databases
      * @param {string} apiKey - API key
      * @returns {Array} List of databases
@@ -289,6 +344,32 @@ queryDatabase(databaseId, queryPayload = {}, apiKey) {
         // Non-fatal: return null so caller can deal with it
         return null;
     }
+    }
+
+    /**
+     * Create or update URL property in database schema
+     * @param {string} databaseId - Database ID
+     * @param {string} propertyName - Property name
+     * @param {string} apiKey - Notion API key
+     * @returns {Object|null} Updated database
+     */
+    ensureUrlProperty(databaseId, propertyName, apiKey) {
+      const cleanId = this._normalizeId(databaseId);
+      const payload = {
+        properties: {
+          [propertyName]: { url: {} }
+        }
+      };
+
+      try {
+        this._logger.debug('Adding URL property via PATCH', { propertyName });
+        const result = this.request(`/databases/${cleanId}`, 'PATCH', payload, apiKey);
+        this._logger.info('URL property created', { propertyName });
+        return result;
+      } catch (error) {
+        this._logger.error('Failed to create URL property', error && error.message ? error.message : error);
+        return null;
+      }
     }
 
  /**

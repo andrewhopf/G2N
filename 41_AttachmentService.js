@@ -10,10 +10,16 @@
 class AttachmentService {
   /**
    * @param {Logger} logger - Logger instance
+   * @param {NotionAdapter} notionAdapter - Notion adapter
+   * @param {ConfigRepository} configRepo - Config repository
    */
-  constructor(logger) {
+  constructor(logger, notionAdapter, configRepo) {
     /** @private */
     this._logger = logger;
+    /** @private */
+    this._notion = notionAdapter;
+    /** @private */
+    this._configRepo = configRepo;
     /** @private */
     this._folderName = 'Gmail-to-Notion Attachments';
     /** @private */
@@ -39,7 +45,7 @@ class AttachmentService {
     this._logger.info('Processing attachments', { count: attachments.length, handling });
 
     const processed = [];
-    const folder = this._getOrCreateFolder();
+    const folder = handling === 'upload_to_notion' ? null : this._getOrCreateFolder();
 
     attachments.forEach((attachment, index) => {
       try {
@@ -64,6 +70,87 @@ class AttachmentService {
   }
 
   /**
+   * Normalize attachment filename for matching
+   * @param {string} name
+   * @returns {string}
+   */
+  normalizeFileName(name) {
+    return this._truncateFileName(String(name || ''));
+  }
+
+  /**
+   * Save last processed attachments for reuse
+   * @param {string} messageId
+   * @param {Array} processed
+   * @param {string} handling
+   */
+  setLastProcessedAttachments(messageId, processed = [], handling = 'upload_to_drive') {
+    try {
+      const props = PropertiesService.getUserProperties();
+      const payload = {
+        messageId: messageId || '',
+        handling: handling || 'upload_to_drive',
+        processed: Array.isArray(processed) ? processed.map(file => ({
+          name: file.name || '',
+          sourceName: file.sourceName || '',
+          url: file.url || '',
+          downloadUrl: file.downloadUrl || '',
+          size: Number(file.size) || 0,
+          type: file.type || '',
+          driveId: file.driveId || '',
+          notionUploadId: file.notionUploadId || ''
+        })) : []
+      };
+      props.setProperty('G2N_LAST_PROCESSED_ATTACHMENTS', JSON.stringify(payload));
+    } catch (error) {
+      this._logger.warn('Failed to save processed attachments', { error: error.message });
+    }
+  }
+
+  /**
+   * Get last processed attachments for a message
+   * @param {string} messageId
+   * @returns {{messageId: string, handling: string, processed: Array}|null}
+   */
+  getLastProcessedAttachments(messageId) {
+    try {
+      const props = PropertiesService.getUserProperties();
+      const raw = props.getProperty('G2N_LAST_PROCESSED_ATTACHMENTS');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (messageId && parsed.messageId !== messageId) return null;
+      return {
+        messageId: parsed.messageId || '',
+        handling: parsed.handling || 'upload_to_drive',
+        processed: Array.isArray(parsed.processed) ? parsed.processed : []
+      };
+    } catch (error) {
+      this._logger.warn('Failed to read processed attachments', { error: error.message });
+      return null;
+    }
+  }
+
+  /**
+   * Find a processed attachment that matches name and size
+   * @param {Array} processed
+   * @param {string} name
+   * @param {number} size
+   * @returns {Object|null}
+   */
+  findProcessedAttachment(processed, name, size) {
+    if (!Array.isArray(processed)) return null;
+    const normalized = this.normalizeFileName(name);
+    const targetSize = Number(size) || 0;
+    return processed.find(file => {
+      const matchName = file.sourceName || file.name || '';
+      const fileName = this.normalizeFileName(matchName);
+      const fileSize = Number(file.size) || 0;
+      return fileName === normalized && fileSize === targetSize;
+    }) || null;
+  }
+
+  /**
    * Process single attachment
    * @private
    */
@@ -71,6 +158,7 @@ class AttachmentService {
     const name = attachment.getName();
     const size = attachment.getSize();
     const contentType = attachment.getContentType();
+    const sourceName = name;
 
     // Check file size
     if (size > this._maxFileSize) {
@@ -82,10 +170,24 @@ class AttachmentService {
       // Just return metadata without uploading
       return {
         name: this._truncateFileName(name),
+        sourceName: sourceName,
         url: '', // No URL for link_only
         size: size,
         type: contentType,
         uploaded: false
+      };
+    }
+
+    if (handling === 'upload_to_notion') {
+      const uploadId = this._uploadToNotion(attachment);
+      return {
+        name: this._truncateFileName(name),
+        sourceName: sourceName,
+        url: '',
+        size: size,
+        type: contentType,
+        notionUploadId: uploadId,
+        uploaded: true
       };
     }
 
@@ -94,12 +196,25 @@ class AttachmentService {
     
     return {
       name: this._truncateFileName(file.getName()),
+      sourceName: sourceName,
       url: file.getUrl(),
+      downloadUrl: this._getDriveDownloadUrl(file.getId()),
       size: size,
       type: contentType,
       driveId: file.getId(),
       uploaded: true
     };
+  }
+
+  /**
+   * Build a direct download URL for Drive files
+   * @private
+   * @param {string} driveId
+   * @returns {string}
+   */
+  _getDriveDownloadUrl(driveId) {
+    if (!driveId) return '';
+    return `https://drive.google.com/uc?export=download&id=${driveId}`;
   }
 
   /**
@@ -124,7 +239,7 @@ class AttachmentService {
       
       // Set sharing to anyone with link can view
       this._withDriveRetry(
-        () => file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW),
+        () => file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT),
         'setSharing'
       );
       
@@ -159,7 +274,7 @@ class AttachmentService {
       if (folders.hasNext()) {
         const existing = folders.next();
         this._withDriveRetry(
-          () => existing.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW),
+          () => existing.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT),
           'setFolderSharing'
         );
         this._logger.info('Using existing attachments folder', { 
@@ -179,7 +294,7 @@ class AttachmentService {
         'setFolderDescription'
       );
       this._withDriveRetry(
-        () => folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW),
+        () => folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT),
         'setFolderSharing'
       );
       
@@ -320,6 +435,30 @@ class AttachmentService {
   _truncateFileName(name) {
     if (!name) return '';
     return name.length > 100 ? name.substring(0, 100) : name;
+  }
+
+  /**
+   * Upload attachment to Notion (hosted)
+   * @private
+   */
+  _uploadToNotion(attachment) {
+    const config = this._configRepo.getAll();
+    if (!config.apiKey) {
+      throw new Error('Notion API key not configured');
+    }
+
+    const blob = attachment.copyBlob();
+    const filename = attachment.getName();
+    const contentType = attachment.getContentType();
+    const size = blob.getBytes().length;
+
+    const uploadTicket = this._notion.createFileUpload(filename, contentType, size, config.apiKey);
+    if (!uploadTicket || !uploadTicket.id || !uploadTicket.upload_url) {
+      throw new Error('Failed to create Notion upload');
+    }
+
+    this._notion.sendFileUpload(uploadTicket.upload_url, blob);
+    return uploadTicket.id;
   }
 
   /**

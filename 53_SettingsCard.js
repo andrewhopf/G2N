@@ -49,7 +49,7 @@ class SettingsCard extends BaseCardRenderer {
       // === SECTION 3: Mappings (if DB selected) ===
       if (status.hasDatabaseId) {
         const mappingsSection = CardService.newCardSection()
-          .setHeader('🔄 Field Mappings')
+          .setHeader('✉️ Email Mappings')
           .addWidget(
             this.textParagraph(
               status.hasMappings
@@ -59,7 +59,7 @@ class SettingsCard extends BaseCardRenderer {
           )
           .addWidget(
             this.buttonSet(
-              this.newButton('⚙️ Configure Mappings', 'showMappingsConfiguration')
+              this.newButton('✉️ Email Mappings', 'showMappingsConfiguration')
             )
           );
         sections.push(mappingsSection);
@@ -67,7 +67,7 @@ class SettingsCard extends BaseCardRenderer {
 
 // === SECTION 4: Attachments === 
 const attachmentsSection = CardService.newCardSection()
-  .setHeader('📎 Attachments');
+  .setHeader('📎 Attachment Mappings');
 
 try {
   // Get configuration
@@ -75,8 +75,7 @@ try {
   const hasApiKey = config.apiKey;
   const hasDatabase = config.databaseId;
   const attachmentDbId = config.attachmentDatabaseId || config.databaseId;
-  const fileHandling = config.fileHandling || 'upload_to_drive';
-  const filesPropertyName = config.filesPropertyName || 'Attachments';
+  const filesPropertyName = 'Attachments';
 
   // Show status
   if (hasApiKey && hasDatabase) {
@@ -86,22 +85,15 @@ try {
       ));
     }
     
-    // Convert file handling to readable text
-    let handlingText = '';
-    if (fileHandling === 'upload_to_drive') {
-      handlingText = 'Upload to Drive';
-    } else if (fileHandling === 'link_only') {
-      handlingText = 'Link only';
-    } else {
-      handlingText = 'Skip';
-    }
-    
-    attachmentsSection.addWidget(this.textParagraph(
-      '<b>File Handling:</b> ' + handlingText
-    ));
-    
     attachmentsSection.addWidget(this.textParagraph(
       '<b>Files Property:</b> ' + filesPropertyName
+    ));
+
+    const embedEmail = config.attachmentEmbedEmailPage ? 'Email page' : '';
+    const embedAttachment = config.attachmentEmbedAttachmentPage ? 'Attachment pages' : '';
+    const embedTargets = [embedEmail, embedAttachment].filter(Boolean).join(', ');
+    attachmentsSection.addWidget(this.textParagraph(
+      '<b>Embed in Pages:</b> ' + (embedTargets || 'None')
     ));
   } else {
     attachmentsSection.addWidget(this.textParagraph(

@@ -553,6 +553,11 @@ _buildAttachmentSelectionSection(messageId) {
 
     section.addWidget(selection);
 
+    section.addWidget(
+      CardService.newTextParagraph()
+        .setText('<i>If the Files property does not exist, it will be created when you save attachments.</i>')
+    );
+
     const selectedLabel = selectedNames.length > 0
       ? selectedNames.join(', ')
       : 'All attachments (default)';
@@ -595,7 +600,7 @@ _buildAttachmentMappingWarning(messageId) {
   try {
     if (!messageId) return null;
     const config = this.configRepo.getAll();
-    if (!config.attachmentDatabaseId || config.fileHandling === 'skip') return null;
+    if (!config.attachmentDatabaseId) return null;
 
     const extracted = this._extractEmailData(messageId);
     const emailData = extracted ? extracted.emailData : null;
@@ -1390,7 +1395,7 @@ _buildEmailDetailsSection(messageId, status) {
      * @returns {CardService.CardSection} Mapping summary section
      */
     _buildMappingSummarySection(messageId) {
-        const section = this.sectionWithHeader('📋 Notion Mappings');
+        const section = this.sectionWithHeader('📋 Email Mappings');
         const enabledMappings = this.mappingRepo.getEnabled();
         const mappingKeys = Object.keys(enabledMappings);
         const extracted = messageId ? this._extractEmailData(messageId) : null;
@@ -1564,7 +1569,7 @@ _buildEmailDetailsSection(messageId, status) {
                             filled: true
                         }
                     ),
-                    this.newButton('⚙️ Mappings', 'showMappingsConfiguration')
+                    this.newButton('✉️ Email Mappings', 'showMappingsConfiguration')
                 )
             );
         } else {

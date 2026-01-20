@@ -27,6 +27,8 @@ class ConfigRepository {
       attachmentMappings: '{}',
       filesPropertyName: 'Attachments',
       fileHandling: 'upload_to_drive',
+      attachmentEmbedEmailPage: 'false',
+      attachmentEmbedAttachmentPage: 'false',
       autoSave: 'false',
       notifications: 'true'
     };
@@ -41,6 +43,8 @@ class ConfigRepository {
       attachmentMappings: 'G2N_ATTACHMENT_MAPPINGS',
       filesPropertyName: 'G2N_FILES_PROPERTY_NAME',
       fileHandling: 'G2N_FILE_HANDLING',
+      attachmentEmbedEmailPage: 'G2N_ATTACHMENT_EMBED_EMAIL_PAGE',
+      attachmentEmbedAttachmentPage: 'G2N_ATTACHMENT_EMBED_ATTACHMENT_PAGE',
       autoSave: 'G2N_AUTO_SAVE',
       notifications: 'G2N_NOTIFICATIONS'
     };
@@ -75,6 +79,8 @@ class ConfigRepository {
         attachmentMappings: props[this._keys.attachmentMappings] || this._defaults.attachmentMappings,
         filesPropertyName: props[this._keys.filesPropertyName] || this._defaults.filesPropertyName,
         fileHandling: props[this._keys.fileHandling] || this._defaults.fileHandling,
+        attachmentEmbedEmailPage: props[this._keys.attachmentEmbedEmailPage] === 'true',
+        attachmentEmbedAttachmentPage: props[this._keys.attachmentEmbedAttachmentPage] === 'true',
         autoSave: props[this._keys.autoSave] === 'true',
         notifications: props[this._keys.notifications] !== 'false'
       };

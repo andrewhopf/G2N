@@ -7,13 +7,15 @@ class PageService {
    * @param {NotionService} notionService
    * @param {MappingService} mappingService
    * @param {PageContentBuilder} contentBuilder
+   * @param {AttachmentService} attachmentService
    * @param {ConfigRepository} configRepo
    * @param {Logger} logger
    */
-  constructor(notionService, mappingService, contentBuilder, configRepo, logger) {
+  constructor(notionService, mappingService, contentBuilder, attachmentService, configRepo, logger) {
     this.notionService = notionService;
     this.mappingService = mappingService;
     this.contentBuilder = contentBuilder;
+    this.attachmentService = attachmentService;
     this.configRepo = configRepo;
     this.logger = logger;
   }
@@ -126,9 +128,57 @@ class PageService {
       }
     }
 
-    const children = (this.contentBuilder && typeof this.contentBuilder.buildEmailContent === 'function')
+    let children = (this.contentBuilder && typeof this.contentBuilder.buildEmailContent === 'function')
       ? this.contentBuilder.buildEmailContent(emailData)
       : [];
+
+    if (config.attachmentEmbedEmailPage) {
+      try {
+        const handling = 'upload_to_drive';
+        if (handling !== 'skip' && handling !== 'link_only') {
+          const sourceAttachments = this.attachmentService.getAttachmentsForMessage(
+            emailData.messageId,
+            emailData.attachments
+          );
+          const selected = this.attachmentService.filterSelectedAttachments(
+            sourceAttachments,
+            emailData.messageId
+          );
+
+          if (selected.length > 0) {
+            let processed = this.attachmentService.getLastProcessedAttachments(emailData.messageId);
+            let processedFiles = processed && processed.handling === handling
+              ? processed.processed
+              : [];
+
+            if (!processedFiles || processedFiles.length === 0) {
+              processedFiles = this.attachmentService.processAttachments(
+                selected,
+                emailData.subject,
+                handling
+              );
+              this.attachmentService.setLastProcessedAttachments(
+                emailData.messageId,
+                processedFiles,
+                handling
+              );
+            }
+
+            if (processedFiles.length > 0) {
+              const attachmentBlocks = this.contentBuilder.buildAttachmentFileBlocks(
+                processedFiles,
+                '📎 Attached Files'
+              );
+              children = children.concat(attachmentBlocks);
+            }
+          }
+        }
+      } catch (error) {
+        this.logger.warn('Failed to add attachment blocks to email page', error.message);
+      }
+    }
+
+    children = this._sanitizeBlocks(children);
 
     // Log final properties being sent
     this.logger.debug('Final properties to send to Notion', {
@@ -138,6 +188,40 @@ class PageService {
 
     const page = this.notionService.createPage(properties, children);
     return page;
+  }
+
+  /**
+   * Remove invalid blocks to prevent Notion validation errors
+   * @private
+   * @param {Array} blocks
+   * @returns {Array}
+   */
+  _sanitizeBlocks(blocks) {
+    if (!Array.isArray(blocks)) return [];
+    const sanitized = [];
+
+    blocks.forEach(block => {
+      if (!block || !block.type) return;
+      const type = block.type;
+      const payload = block[type];
+      if (!payload) return;
+
+      if (type === 'file') {
+        if (!payload.type) return;
+        if (payload.type === 'external' && !payload.external) return;
+        if (payload.type === 'file_upload' && !payload.file_upload) return;
+      }
+
+      if (type === 'image') {
+        if (!payload.image && !payload.external && !payload.file) {
+          if (!payload.external && !payload.file) return;
+        }
+      }
+
+      sanitized.push(block);
+    });
+
+    return sanitized;
   }
 
   /**

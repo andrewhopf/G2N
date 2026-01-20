@@ -48,6 +48,7 @@
     }
   },
   "urlFetchWhitelist": [
-    "https://api.notion.com/"
+    "https://api.notion.com/",
+    "https://*.amazonaws.com/"
   ]
 }

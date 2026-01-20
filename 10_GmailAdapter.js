@@ -40,13 +40,11 @@ class GmailAdapter {
    */
   _getViaGmailApp(messageId) {
     try {
-      // Handle various ID formats
-      let actualId = messageId;
-      if (messageId.includes(':')) {
-        actualId = messageId.split(':').pop();
+      let message = GmailApp.getMessageById(messageId);
+      if (!message && messageId.includes(':')) {
+        const actualId = messageId.split(':').pop();
+        message = GmailApp.getMessageById(actualId);
       }
-
-      const message = GmailApp.getMessageById(actualId);
       if (!message) return null;
 
       const thread = message.getThread();
@@ -90,7 +88,17 @@ class GmailAdapter {
         return null;
       }
 
-      const message = Gmail.Users.Messages.get('me', messageId, { format: 'full' });
+      let message = null;
+      try {
+        message = Gmail.Users.Messages.get('me', messageId, { format: 'full' });
+      } catch (error) {
+        if (messageId && messageId.includes(':')) {
+          const actualId = messageId.split(':').pop();
+          message = Gmail.Users.Messages.get('me', actualId, { format: 'full' });
+        } else {
+          throw error;
+        }
+      }
       if (!message) return null;
 
       const headers = this._parseHeaders(message.payload.headers);
@@ -182,11 +190,22 @@ class GmailAdapter {
    */
   _decodeBase64(data) {
     try {
-      const decoded = Utilities.base64Decode(data, Utilities.Charset.UTF_8);
+      if (!data) return '';
+      let decoded;
+      if (/[\\-_]/.test(data)) {
+        decoded = Utilities.base64DecodeWebSafe(data);
+      } else {
+        decoded = Utilities.base64Decode(data);
+      }
       return Utilities.newBlob(decoded).getDataAsString();
     } catch (error) {
-      this._logger.warn('Base64 decode failed', error.message);
-      return '';
+      try {
+        const decoded = Utilities.base64DecodeWebSafe(data);
+        return Utilities.newBlob(decoded).getDataAsString();
+      } catch (retryError) {
+        this._logger.warn('Base64 decode failed', error.message);
+        return '';
+      }
     }
   }
 

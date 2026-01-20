@@ -50,7 +50,7 @@ class CardFactory {
       )
       .addWidget(
         CardService.newKeyValue()
-          .setTopLabel('Mappings')
+          .setTopLabel('Email Mappings')
           .setContent(status.hasMappings ? `✅ ${status.enabledMappings} configured` : '❌ Not configured')
       );
 
@@ -146,7 +146,7 @@ class CardFactory {
 
     // --- SECTION 2: MAPPINGS SUMMARY ---
     const mappingSection = CardService.newCardSection()
-      .setHeader('📋 Notion Mappings')
+      .setHeader('📋 Email Mappings')
       // Added database name here for clarity as requested
       .addWidget(CardService.newTextParagraph().setText(`Saving to: <b>${status.databaseName || 'Mail'}</b>`));
 
@@ -183,7 +183,7 @@ class CardFactory {
           )
           .addButton(
             CardService.newTextButton()
-              .setText('⚙️ Edit Mappings')
+              .setText('✉️ Email Mappings')
               .setOnClickAction(CardService.newAction().setFunctionName('showMappingsConfiguration'))
           )
       );
@@ -261,7 +261,7 @@ class CardFactory {
     if (status.hasDatabaseId) {
       card.addSection(
         CardService.newCardSection()
-          .setHeader('🔄 Field Mappings')
+          .setHeader('✉️ Email Mappings')
           .addWidget(
             CardService.newTextParagraph()
               .setText(status.hasMappings 
@@ -272,7 +272,7 @@ class CardFactory {
             CardService.newButtonSet()
               .addButton(
                 CardService.newTextButton()
-                  .setText('⚙️ Configure Mappings')
+                  .setText('✉️ Email Mappings')
                   .setOnClickAction(
                     CardService.newAction()
                       .setFunctionName('showMappingsConfiguration')
@@ -288,12 +288,7 @@ class CardFactory {
 
     if (status.hasApiKey && status.hasDatabaseId) {
       const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Selected';
-      const fileHandling = config.fileHandling || 'upload_to_drive';
-      const filesPropertyName = config.filesPropertyName || 'Attachments';
-
-      let handlingText = 'Upload to Drive';
-      if (fileHandling === 'link_only') handlingText = 'Link only';
-      if (fileHandling === 'skip') handlingText = 'Skip';
+      const filesPropertyName = 'Attachments';
 
       attachmentsSection.addWidget(
         CardService.newTextParagraph()
@@ -304,10 +299,6 @@ class CardFactory {
           .setText(attachmentMappingRepo.getEnabledCount() > 0
             ? `${attachmentMappingRepo.getEnabledCount()} mappings configured`
             : 'Not configured')
-      );
-      attachmentsSection.addWidget(
-        CardService.newTextParagraph()
-          .setText(`File Handling: <b>${handlingText}</b>`)
       );
       attachmentsSection.addWidget(
         CardService.newTextParagraph()
@@ -323,8 +314,8 @@ class CardFactory {
     attachmentsSection.addWidget(
       CardService.newButtonSet()
         .addButton(
-          CardService.newTextButton()
-            .setText('📎 Configure Attachments')
+        CardService.newTextButton()
+          .setText('📎 Attachment Mappings')
             .setOnClickAction(
               CardService.newAction()
                 .setFunctionName('showAttachmentMappingsConfiguration')
@@ -508,7 +499,7 @@ class CardFactory {
     const missing = [];
     if (!status.hasApiKey) missing.push('API Key');
     if (!status.hasDatabaseId) missing.push('Database');
-    if (!status.hasMappings) missing.push('Mappings');
+    if (!status.hasMappings) missing.push('Email Mappings');
 
     section.addWidget(
       CardService.newTextParagraph()
@@ -538,7 +529,7 @@ class CardFactory {
     } else {
       buttonSet.addButton(
         CardService.newTextButton()
-          .setText('⚙️ Configure Mappings')
+          .setText('✉️ Email Mappings')
           .setOnClickAction(
             CardService.newAction()
               .setFunctionName('showMappingsConfiguration')

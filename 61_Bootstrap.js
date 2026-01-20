@@ -40,7 +40,7 @@ function bootstrap() {
 
   // 🔧 FIX: Register attachmentService BEFORE handlerFactory
   container.register('attachmentService', AttachmentService, {
-    dependencies: ['logger'],
+    dependencies: ['logger', 'notionAdapter', 'configRepo'],
     singleton: true
   });
 
@@ -79,7 +79,7 @@ function bootstrap() {
     });
 
     container.register('attachmentService', AttachmentService, {
-        dependencies: ['logger'],
+        dependencies: ['logger', 'notionAdapter', 'configRepo'],
         singleton: true
     });
 
@@ -96,7 +96,7 @@ function bootstrap() {
     container.register('contentBuilder', PageContentBuilder, { singleton: true });
 
     container.register('attachmentPageService', AttachmentPageService, {
-        dependencies: ['notionAdapter', 'attachmentMappingService', 'attachmentDatabaseService', 'attachmentService', 'configRepo', 'logger'],
+        dependencies: ['notionAdapter', 'attachmentMappingService', 'attachmentDatabaseService', 'attachmentService', 'contentBuilder', 'configRepo', 'logger'],
         singleton: true
     });
 
@@ -106,6 +106,7 @@ function bootstrap() {
             c.resolve('notionService'),
             c.resolve('mappingService'),
             c.resolve('contentBuilder'),
+            c.resolve('attachmentService'),
             c.resolve('configRepo'),
             c.resolve('logger')
         );

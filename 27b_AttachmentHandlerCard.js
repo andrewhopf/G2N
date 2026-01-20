@@ -34,8 +34,8 @@ function showAttachmentsConfiguration(event) {
     
     // Build the card
     const header = CardService.newCardHeader()
-      .setTitle('📎 Attachments Configuration')
-      .setSubtitle('Configure how email attachments are handled');
+      .setTitle('📎 Attachments Settings')
+      .setSubtitle('Configure attachment settings');
     
     const card = CardService.newCardBuilder()
       .setHeader(header);
@@ -66,33 +66,31 @@ function showAttachmentsConfiguration(event) {
     // === SECTION 2: Files Property Configuration ===
     const filesSection = CardService.newCardSection()
       .setHeader('📁 Files Property');
-    
-    filesSection.addWidget(CardService.newTextInput()
-      .setFieldName('files_property_name') // Consistent field name
-      .setTitle('Property Name for Files')
-      .setValue(config.filesPropertyName || 'Attachments')
-      .setHint('Name of the files property in Notion (default: "Attachments")'));
-    
+
+    filesSection.addWidget(CardService.newTextParagraph()
+      .setText('<i>Files will be saved to a Files property named "Attachments". If it does not exist, it will be created.</i>'));
+
     card.addSection(filesSection);
     
-    // === SECTION 3: Attachment Handling ===
-    const handlingSection = CardService.newCardSection()
-      .setHeader('⚙️ Attachment Handling');
+    // === SECTION 3: Page Embeds ===
+    const embedSection = CardService.newCardSection()
+      .setHeader('📄 Page Embeds');
+
+    const embedEmail = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('embed_email_page')
+      .addItem('Add attachments to email page body', 'yes', config.attachmentEmbedEmailPage === true);
+
+    const embedAttachment = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('embed_attachment_page')
+      .addItem('Add attachments to attachment pages', 'yes', config.attachmentEmbedAttachmentPage === true);
+
+    embedSection.addWidget(embedEmail);
+    embedSection.addWidget(embedAttachment);
+    card.addSection(embedSection);
     
-    const handlingDropdown = CardService.newSelectionInput()
-      .setType(CardService.SelectionInputType.DROPDOWN)
-      .setFieldName('file_handling') // Consistent field name
-      .setTitle('How to handle attachments');
-    
-    const currentHandling = config.fileHandling || 'upload_to_drive';
-    handlingDropdown.addItem('Upload to Google Drive', 'upload_to_drive', currentHandling === 'upload_to_drive');
-    handlingDropdown.addItem('Link only (no upload)', 'link_only', currentHandling === 'link_only');
-    handlingDropdown.addItem('Skip attachments', 'skip', currentHandling === 'skip');
-    
-    handlingSection.addWidget(handlingDropdown);
-    card.addSection(handlingSection);
-    
-    // === SECTION 4: Actions ===
+    // === SECTION 5: Actions ===
     const actionSection = CardService.newCardSection()
       .addWidget(CardService.newButtonSet()
         .addButton(CardService.newTextButton()
@@ -106,13 +104,13 @@ function showAttachmentsConfiguration(event) {
           .setOnClickAction(CardService.newAction()
             .setFunctionName('saveAttachmentSettings')))
         .addButton(CardService.newTextButton()
-          .setText('📎 Configure Mappings')
+          .setText('📎 Attachment Mappings')
           .setOnClickAction(CardService.newAction()
             .setFunctionName('showAttachmentMappingsConfiguration'))));
     
     card.addSection(actionSection);
     
-    // === SECTION 5: Navigation ===
+    // === SECTION 6: Navigation ===
     const navSection = CardService.newCardSection()
       .addWidget(CardService.newButtonSet()
         .addButton(CardService.newTextButton()
@@ -171,8 +169,8 @@ function buildAttachmentsCard() {
     
     // Build the card
     const header = CardService.newCardHeader()
-      .setTitle('📎 Attachments Configuration')
-      .setSubtitle('Configure where and how email attachments are saved');
+      .setTitle('📎 Attachments Settings')
+      .setSubtitle('Configure attachment settings');
     
     const card = CardService.newCardBuilder()
       .setHeader(header);
@@ -199,9 +197,6 @@ function buildAttachmentsCard() {
         .setTopLabel('Files Property')
         .setContent(hasFilesProperty ? '✅ Configured' : '❌ Not found'));
       
-      statusSection.addWidget(CardService.newKeyValue()
-        .setTopLabel('Handling')
-        .setContent(_getFileHandlingDisplay(config.fileHandling || 'upload_to_drive')));
     } else {
       statusSection.addWidget(CardService.newTextParagraph()
         .setText('<font color="#FF6B6B">⚠️ No attachment database configured</font>'));
@@ -251,55 +246,35 @@ function buildAttachmentsCard() {
     
     // === SECTION 3: Files Property ===
     const filesSection = CardService.newCardSection()
-      .setHeader('📁 Files Property Configuration');
-    
+      .setHeader('📁 Files Property');
+
     if (currentAttachmentDbId) {
-      filesSection.addWidget(CardService.newTextInput()
-        .setFieldName('files_property_name')
-        .setTitle('Property Name for Files')
-        .setValue(config.filesPropertyName || 'Attachments')
-        .setHint('Name of the files property in Notion (default: "Attachments")'));
-      
-      filesSection.addWidget(CardService.newButtonSet()
-        .addButton(CardService.newTextButton()
-          .setText('🛠️ Ensure Files Property Exists')
-          .setBackgroundColor('#4285F4')
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName('ensureAttachmentField'))));
+      filesSection.addWidget(CardService.newTextParagraph()
+        .setText('<i>Files will be saved to a Files property named "Attachments". If it does not exist, it will be created.</i>'));
     } else {
       filesSection.addWidget(CardService.newTextParagraph()
-        .setText('<i>Select a database first to configure files property.</i>'));
+        .setText('<i>Select a database first to save attachments.</i>'));
     }
     
     card.addSection(filesSection);
     
-    // === SECTION 4: Attachment Handling ===
-    const handlingSection = CardService.newCardSection()
-      .setHeader('⚙️ How to Handle Attachments');
-    
-    const handlingDropdown = CardService.newSelectionInput()
-      .setType(CardService.SelectionInputType.DROPDOWN)
-      .setFieldName('file_handling')
-      .setTitle('Attachment Handling');
-    
-    const currentHandling = config.fileHandling || 'upload_to_drive';
-    handlingDropdown.addItem('Upload to Google Drive', 'upload_to_drive', currentHandling === 'upload_to_drive');
-    handlingDropdown.addItem('Link only (no upload)', 'link_only', currentHandling === 'link_only');
-    handlingDropdown.addItem('Skip attachments', 'skip', currentHandling === 'skip');
-    
-    handlingSection.addWidget(handlingDropdown);
-    
-    // Explanations
-    handlingSection.addWidget(CardService.newTextParagraph()
-      .setText('<b>Options:</b>'));
-    handlingSection.addWidget(CardService.newTextParagraph()
-      .setText('• <b>Upload to Google Drive</b>: Files uploaded to Drive and linked in Notion'));
-    handlingSection.addWidget(CardService.newTextParagraph()
-      .setText('• <b>Link only</b>: Only store file metadata, no upload'));
-    handlingSection.addWidget(CardService.newTextParagraph()
-      .setText('• <b>Skip</b>: Ignore attachments completely'));
-    
-    card.addSection(handlingSection);
+    // === SECTION 4: Page Embeds ===
+    const embedSection = CardService.newCardSection()
+      .setHeader('📄 Page Embeds');
+
+    const embedEmail = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('embed_email_page')
+      .addItem('Add attachments to email page body', 'yes', config.attachmentEmbedEmailPage === true);
+
+    const embedAttachment = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('embed_attachment_page')
+      .addItem('Add attachments to attachment pages', 'yes', config.attachmentEmbedAttachmentPage === true);
+
+    embedSection.addWidget(embedEmail);
+    embedSection.addWidget(embedAttachment);
+    card.addSection(embedSection);
     
     // === SECTION 5: Actions ===
     const actionSection = CardService.newCardSection()
@@ -316,7 +291,7 @@ function buildAttachmentsCard() {
         .setFunctionName('saveAttachmentSettings')));
 
     buttonSet.addButton(CardService.newTextButton()
-      .setText('📎 Configure Mappings')
+      .setText('📎 Attachment Mappings')
       .setOnClickAction(CardService.newAction()
         .setFunctionName('showAttachmentMappingsConfiguration')));
     
@@ -355,20 +330,6 @@ function buildAttachmentsCard() {
 }
 
 // ==================== HELPER FUNCTIONS ====================
-
-/**
- * Get display text for file handling option
- * @private
- * @returns {string}
- */
-function _getFileHandlingDisplay(handling) {
-  const options = {
-    'upload_to_drive': 'Upload to Google Drive',
-    'link_only': 'Link only (no upload)',
-    'skip': 'Skip attachments'
-  };
-  return options[handling] || 'Upload to Google Drive';
-}
 
 /**
  * Build error card for missing API key
@@ -585,10 +546,21 @@ function ensureAttachmentField(event) {
         const formInput = event.formInput || {};
         const attachmentDbId = formInput.attachment_database_id || 
                             formInput.selected_database_for_attachments;
-        const fileHandling = formInput.file_handling || 'upload_to_drive';
-        const filesPropertyName = (formInput.files_property_name || 
-                                formInput.attachment_property_name || 
-                                'Attachments').trim();
+        const fileHandling = 'upload_to_drive';
+        const filesPropertyName = 'Attachments';
+        const existingConfig = configRepo.getAll();
+        const embedEmailInput = formInput.embed_email_page;
+        const embedAttachmentInput = formInput.embed_attachment_page;
+        const embedEmailPage = embedEmailInput === undefined
+          ? existingConfig.attachmentEmbedEmailPage
+          : (Array.isArray(embedEmailInput)
+            ? embedEmailInput.includes('yes')
+            : embedEmailInput === 'yes');
+        const embedAttachmentPage = embedAttachmentInput === undefined
+          ? existingConfig.attachmentEmbedAttachmentPage
+          : (Array.isArray(embedAttachmentInput)
+            ? embedAttachmentInput.includes('yes')
+            : embedAttachmentInput === 'yes');
         
         if (!attachmentDbId) {
         return CardService.newActionResponseBuilder()
@@ -628,13 +600,12 @@ function ensureAttachmentField(event) {
         const configData = {
         attachmentDatabaseId: attachmentDbId,
         attachmentDatabaseName: attachmentDbName,
-        fileHandling: fileHandling
+        fileHandling: fileHandling,
+        attachmentEmbedEmailPage: embedEmailPage,
+        attachmentEmbedAttachmentPage: embedAttachmentPage
         };
         
-        // Only add filesPropertyName if it's provided
-        if (filesPropertyName && filesPropertyName !== 'Attachments') {
         configData.filesPropertyName = filesPropertyName;
-        }
         
         configRepo.set(configData);
         

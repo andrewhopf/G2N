@@ -13,14 +13,16 @@ class AttachmentPageService {
    * @param {MappingService} mappingService
    * @param {AttachmentDatabaseService} databaseService
    * @param {AttachmentService} attachmentService
+   * @param {PageContentBuilder} contentBuilder
    * @param {ConfigRepository} configRepo
    * @param {Logger} logger
    */
-  constructor(notionAdapter, mappingService, databaseService, attachmentService, configRepo, logger) {
+  constructor(notionAdapter, mappingService, databaseService, attachmentService, contentBuilder, configRepo, logger) {
     this._notion = notionAdapter;
     this._mapping = mappingService;
     this._database = databaseService;
     this._attachments = attachmentService;
+    this._contentBuilder = contentBuilder;
     this._config = configRepo;
     this._logger = logger;
   }
@@ -43,15 +45,32 @@ class AttachmentPageService {
       return { created: 0, skipped: 0, pages: [] };
     }
 
-    if (config.fileHandling === 'skip') {
-      this._logger.info('Attachment save skipped by settings');
-      return { created: 0, skipped: emailData.attachmentCount || 0, pages: [] };
-    }
-
-    const schema = this._database.getCurrentSchema();
+    let schema = this._database.getCurrentSchema();
     if (!schema) {
       this._logger.warn('Attachment schema unavailable, skipping attachment save');
       return { created: 0, skipped: emailData.attachmentCount || 0, pages: [] };
+    }
+
+    const filesProperties = Array.isArray(schema.properties)
+      ? schema.properties.filter(p => p.type === 'files')
+      : [];
+    let filesPropertyName = filesProperties.length > 0
+      ? filesProperties[0].name
+      : (config.filesPropertyName || 'Attachments');
+    if (filesProperties.length === 0) {
+      try {
+        this._logger.info('Creating Files property for attachments', { name: filesPropertyName });
+        this._notion.ensureFilesProperty(config.attachmentDatabaseId, filesPropertyName, config.apiKey);
+        schema = this._database.getCurrentSchema() || schema;
+        const refreshedFiles = Array.isArray(schema.properties)
+          ? schema.properties.filter(p => p.type === 'files')
+          : [];
+        if (refreshedFiles.length > 0) {
+          filesPropertyName = refreshedFiles[0].name;
+        }
+      } catch (error) {
+        this._logger.warn('Failed to create Files property for attachments', { error: error.message });
+      }
     }
 
     const createdPages = [];
@@ -77,6 +96,25 @@ class AttachmentPageService {
       return { created: 0, skipped: emailData.attachmentCount || 0, pages: [] };
     }
 
+    this._logger.info('Attachment embed flag', { enabled: !!config.attachmentEmbedAttachmentPage });
+
+    const handling = 'upload_to_drive';
+    let processedFiles = [];
+    try {
+      processedFiles = this._attachments.processAttachments(
+        attachments,
+        emailData.subject,
+        handling
+      );
+      this._attachments.setLastProcessedAttachments(
+        emailData.messageId,
+        processedFiles,
+        handling
+      );
+    } catch (error) {
+      this._logger.warn('Failed to process attachments for pages', { error: error.message });
+    }
+
     attachments.forEach((attachment, index) => {
       try {
         const attachmentData = new AttachmentData(emailData, attachment, {
@@ -90,15 +128,50 @@ class AttachmentPageService {
         properties = this._ensureTitle(properties, schema, attachmentData);
         properties = this._ensureGmailLinkProperty(properties, schema, emailData.gmailLinkUrl, config);
 
+        const match = this._attachments.findProcessedAttachment(
+          processedFiles,
+          attachment.getName(),
+          attachment.getSize()
+        );
+        const filesUrl = (match && (match.downloadUrl || match.url)) || '';
+        if (filesUrl) {
+          properties[filesPropertyName] = {
+            files: [
+              {
+                name: match.sourceName || match.name || attachment.getName(),
+                type: 'external',
+                external: { url: filesUrl }
+              }
+            ]
+          };
+        }
+
         this._logger.debug('Attachment page properties', {
           attachment: attachmentData.getValue('attachmentName'),
           propertyNames: Object.keys(properties)
         });
 
+        let children = [];
+        if (config.attachmentEmbedAttachmentPage) {
+          const processedFile = this._attachments.findProcessedAttachment(
+            processedFiles,
+            attachment.getName(),
+            attachment.getSize()
+          );
+          if (processedFile) {
+            children = this._contentBuilder.buildAttachmentFileBlocks(
+              [processedFile],
+              '📎 Attachment'
+            );
+          }
+        }
+
+        children = this._sanitizeBlocks(children);
+
         const page = this._notion.createPage(
           config.attachmentDatabaseId,
           properties,
-          [],
+          children,
           config.apiKey
         );
 
@@ -116,6 +189,68 @@ class AttachmentPageService {
       skipped: attachments.length - createdPages.length,
       pages: createdPages
     };
+  }
+
+  /**
+   * Remove invalid blocks to prevent Notion validation errors
+   * @private
+   * @param {Array} blocks
+   * @returns {Array}
+   */
+  _sanitizeBlocks(blocks) {
+    if (!Array.isArray(blocks)) return [];
+    const sanitized = [];
+
+    blocks.forEach(block => {
+      if (!block || !block.type) return;
+      const type = block.type;
+      const payload = block[type];
+      if (!payload) return;
+
+      if (type === 'file') {
+        if (!payload.type) return;
+        if (payload.type === 'external' && !payload.external) return;
+        if (payload.type === 'file_upload' && !payload.file_upload) return;
+      }
+
+      if (type === 'image') {
+        if (!payload.image && !payload.external && !payload.file) {
+          if (!payload.external && !payload.file) return;
+        }
+      }
+
+      sanitized.push(block);
+    });
+
+    return sanitized;
+  }
+
+  /**
+   * Get or process a single attachment file for embedding
+   * @private
+   */
+  _getProcessedAttachmentFile(emailData, attachment, handling) {
+    const name = attachment && attachment.getName ? attachment.getName() : '';
+    const size = attachment && attachment.getSize ? attachment.getSize() : 0;
+
+    const cached = this._attachments.getLastProcessedAttachments(emailData.messageId);
+    const cachedFiles = cached && cached.handling === handling ? cached.processed : [];
+    let match = this._attachments.findProcessedAttachment(cachedFiles, name, size);
+    if (match) return match;
+
+    const processed = this._attachments.processAttachments(
+      [attachment],
+      emailData.subject,
+      handling
+    );
+    if (!processed || processed.length === 0) return null;
+
+    const merged = cachedFiles.concat(processed.filter(file => {
+      return !this._attachments.findProcessedAttachment(cachedFiles, file.name, file.size);
+    }));
+    this._attachments.setLastProcessedAttachments(emailData.messageId, merged, handling);
+
+    return processed[0];
   }
 
   /**
