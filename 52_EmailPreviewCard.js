@@ -26,6 +26,7 @@ class EmailPreviewCard extends BaseCardRenderer {
      */
     build(event = {}) {
         try {
+            const startedAt = Date.now();
             const status = this.databaseService.getStatus();
             const messageId = event?.gmail?.messageId || event?.parameters?.messageId;
 
@@ -39,7 +40,12 @@ class EmailPreviewCard extends BaseCardRenderer {
 
             // ========== SECTION 0: DUPLICATE WARNING (AT TOP!) ==========
             try {
+                const duplicateStartedAt = Date.now();
                 const duplicateWarning = this._checkForDuplicates(messageId, status);
+                this.logger.info('Preview duplicate check timing', {
+                    messageId: messageId,
+                    durationMs: Date.now() - duplicateStartedAt
+                });
                 
                 if (duplicateWarning) {
                     this.logger.info('✅ Duplicate warning section created - adding to card');
@@ -55,7 +61,12 @@ class EmailPreviewCard extends BaseCardRenderer {
 
             // ========== SECTION 0B: ATTACHMENT DUPLICATE WARNING ==========
             try {
+                const attachmentDuplicateStartedAt = Date.now();
                 const attachmentWarning = this._checkForAttachmentDuplicates(messageId);
+                this.logger.info('Preview attachment duplicate check timing', {
+                    messageId: messageId,
+                    durationMs: Date.now() - attachmentDuplicateStartedAt
+                });
                 if (attachmentWarning) {
                     sections.push(attachmentWarning);
                 }
@@ -65,46 +76,82 @@ class EmailPreviewCard extends BaseCardRenderer {
             }
 
             // ========== SECTION 1: EMAIL DETAILS ==========
+            const detailsStartedAt = Date.now();
             sections.push(this._buildEmailDetailsSection(messageId, status));
+            this.logger.info('Preview details section timing', {
+                messageId: messageId,
+                durationMs: Date.now() - detailsStartedAt
+            });
 
             // ========== SECTION 2: ATTACHMENTS (SELECTION) ==========
+            const selectionStartedAt = Date.now();
             const attachmentSection = this._buildAttachmentSelectionSection(messageId);
             if (attachmentSection) {
                 sections.push(attachmentSection);
             }
+            this.logger.info('Preview attachment selection section timing', {
+                messageId: messageId,
+                durationMs: Date.now() - selectionStartedAt
+            });
 
             // ========== SECTION 2B: ATTACHMENT MAPPING WARNING ==========
+            const mappingWarningStartedAt = Date.now();
             const attachmentWarning = this._buildAttachmentMappingWarning(messageId);
             if (attachmentWarning) {
                 sections.push(attachmentWarning);
             }
+            this.logger.info('Preview attachment mapping warning timing', {
+                messageId: messageId,
+                durationMs: Date.now() - mappingWarningStartedAt
+            });
 
             // ========== SECTION 2C: ATTACHMENT UPLOADS ==========
+            const uploadsStartedAt = Date.now();
             const uploadSection = this._buildAttachmentUploadSection(messageId);
             if (uploadSection) {
                 sections.push(uploadSection);
             }
+            this.logger.info('Preview attachment uploads section timing', {
+                messageId: messageId,
+                durationMs: Date.now() - uploadsStartedAt
+            });
 
             // ========== SECTION 3: MAPPINGS SUMMARY ==========
+            const mappingSummaryStartedAt = Date.now();
             sections.push(this._buildMappingSummarySection(messageId));
+            this.logger.info('Preview mapping summary timing', {
+                messageId: messageId,
+                durationMs: Date.now() - mappingSummaryStartedAt
+            });
 
             // ========== SECTION 3B: ATTACHMENT MAPPINGS SUMMARY ==========
+            const attachmentSummaryStartedAt = Date.now();
             const attachmentMappingSection = this._buildAttachmentMappingSummarySection(messageId);
             if (attachmentMappingSection) {
                 sections.push(attachmentMappingSection);
             }
+            this.logger.info('Preview attachment mapping summary timing', {
+                messageId: messageId,
+                durationMs: Date.now() - attachmentSummaryStartedAt
+            });
 
             // ========== SECTION 4: ACTIONS ==========
             sections.push(this._buildActionSection(status, messageId));
 
-            // ========== SECTION 5: Home Button ==========
+            // ========== SECTION 5: Settings Button ==========
             sections.push(
                 CardService.newCardSection().addWidget(
-                    this.newButton('🏠 Home', 'onG2NHomepage')
+                    this.newButton('⚙️ Settings', 'showG2NSettings')
                 )
             );
 
-            return this.buildCard(header, sections);
+            const card = this.buildCard(header, sections);
+            this.logger.info('Preview card total timing', {
+                messageId: messageId,
+                durationMs: Date.now() - startedAt,
+                sectionCount: sections.length
+            });
+            return card;
 
         } catch (error) {
             this.logger.error('Preview build failed', error);
@@ -342,6 +389,10 @@ _checkForAttachmentDuplicates(messageId) {
     this.logger.debug('Skipping attachment duplicate check - no attachment database configured');
     return null;
   }
+  if (!config.attachmentUseSeparateDatabase) {
+    this.logger.debug('Skipping attachment duplicate check - separate attachment database disabled');
+    return null;
+  }
 
   if (config.fileHandling === 'skip') {
     this.logger.debug('Skipping attachment duplicate check - attachments disabled');
@@ -352,11 +403,33 @@ _checkForAttachmentDuplicates(messageId) {
   const emailData = extracted ? extracted.emailData : null;
   if (!emailData) return null;
 
+  const selectionKey = this._getSelectionKey(messageId, emailData);
+  const sourceAttachments = this._getAttachmentsForMessage(messageId, emailData);
+  const selectionState = this.container.resolve('attachmentService')
+    .getSelectedAttachmentNames(selectionKey);
+  let selectedAttachments = sourceAttachments;
+  try {
+    const attachmentService = this.container.resolve('attachmentService');
+    if (selectionState !== null) {
+      selectedAttachments = attachmentService.filterSelectedAttachments(
+        sourceAttachments,
+        selectionKey
+      );
+    }
+  } catch (error) {
+    this.logger.debug('Attachment selection lookup failed', error.message);
+  }
+
+  if (!selectedAttachments || selectedAttachments.length === 0) {
+    this.logger.debug('Skipping attachment duplicate check - no attachments selected');
+    return null;
+  }
+
   const gmailDuplicate = this._checkAttachmentDuplicatesByGmailLink(emailData, config);
   if (gmailDuplicate) {
     return gmailDuplicate;
   }
-  const attachments = this._getAttachmentsForMessage(messageId, emailData);
+  const attachments = selectedAttachments;
   if (!attachments || attachments.length === 0) return null;
 
   const mappingRepo = this.container.resolve('attachmentMappingRepo');
@@ -534,8 +607,9 @@ _buildAttachmentSelectionSection(messageId) {
       return emptySection;
     }
 
+    const selectionKey = this._getSelectionKey(messageId, emailData);
     const attachmentService = this.container.resolve('attachmentService');
-    const selectedNames = attachmentService.getSelectedAttachmentNames(messageId);
+    const selectedNames = attachmentService.getSelectedAttachmentNames(selectionKey);
 
     const section = CardService.newCardSection()
       .setHeader('📎 Attachments to Upload');
@@ -547,7 +621,9 @@ _buildAttachmentSelectionSection(messageId) {
 
     attachments.forEach(att => {
       const name = att.getName ? att.getName() : 'Attachment';
-      const isSelected = selectedNames.length === 0 || selectedNames.includes(name);
+      const isSelected = selectedNames === null
+        ? true
+        : selectedNames.includes(name);
       selection.addItem(name, name, isSelected);
     });
 
@@ -558,9 +634,9 @@ _buildAttachmentSelectionSection(messageId) {
         .setText('<i>If the Files property does not exist, it will be created when you save attachments.</i>')
     );
 
-    const selectedLabel = selectedNames.length > 0
-      ? selectedNames.join(', ')
-      : 'All attachments (default)';
+    const selectedLabel = selectedNames === null
+      ? 'All attachments (default)'
+      : (selectedNames.length > 0 ? selectedNames.join(', ') : 'None selected');
 
     section.addWidget(
       CardService.newTextParagraph()
@@ -577,6 +653,7 @@ _buildAttachmentSelectionSection(messageId) {
                 .setFunctionName('saveSelectedAttachments')
                 .setParameters({
                   messageId: messageId,
+                  selectionKey: selectionKey,
                   totalCount: String(attachments.length)
                 })
             )
@@ -601,15 +678,18 @@ _buildAttachmentMappingWarning(messageId) {
     if (!messageId) return null;
     const config = this.configRepo.getAll();
     if (!config.attachmentDatabaseId) return null;
+    if (!config.attachmentUseSeparateDatabase) return null;
 
     const extracted = this._extractEmailData(messageId);
     const emailData = extracted ? extracted.emailData : null;
     const attachments = this._getAttachmentsForMessage(messageId, emailData);
     if (!attachments || attachments.length === 0) return null;
 
+    const selectionKey = this._getSelectionKey(messageId, emailData);
     const attachmentService = this.container.resolve('attachmentService');
-    const selected = attachmentService.getSelectedAttachmentNames(messageId);
-    const selectedCount = selected.length > 0 ? selected.length : attachments.length;
+    const selected = attachmentService.getSelectedAttachmentNames(selectionKey);
+    if (selected === null) return null;
+    const selectedCount = selected.length;
     if (selectedCount === 0) return null;
 
     const mappingRepo = this.container.resolve('attachmentMappingRepo');
@@ -715,16 +795,28 @@ _buildAttachmentUploadSection(messageId) {
  * @param {EmailData|null} emailData
  * @returns {Array}
  */
-_getAttachmentsForMessage(messageId, emailData) {
-  const fallback = emailData && Array.isArray(emailData.attachments) ? emailData.attachments : [];
-  try {
-    const attachmentService = this.container.resolve('attachmentService');
-    return attachmentService.getAttachmentsForMessage(messageId, fallback);
-  } catch (error) {
-    this.logger.debug('Attachment service fetch failed', error.message);
-    return fallback;
-  }
-}
+    _getAttachmentsForMessage(messageId, emailData) {
+      const fallback = emailData && Array.isArray(emailData.attachments) ? emailData.attachments : [];
+      try {
+        const attachmentService = this.container.resolve('attachmentService');
+        return attachmentService.getAttachmentsForMessage(messageId, fallback);
+      } catch (error) {
+        this.logger.debug('Attachment service fetch failed', error.message);
+        return fallback;
+      }
+    }
+
+    /**
+     * Normalize selection key for attachment selection storage
+     * @private
+     * @param {string} messageId
+     * @param {EmailData|null} emailData
+     * @returns {string}
+     */
+    _getSelectionKey(messageId, emailData) {
+        if (emailData && emailData.messageId) return emailData.messageId;
+        return messageId;
+    }
 
 /**
  * Find mapping for attachment field
@@ -1425,12 +1517,24 @@ _buildEmailDetailsSection(messageId, status) {
      */
     _buildAttachmentMappingSummarySection(messageId) {
         try {
+            const config = this.configRepo.getAll();
+            if (!config.attachmentUseSeparateDatabase) {
+                return null;
+            }
+            const extracted = this._extractEmailData(messageId);
+            const emailData = extracted ? extracted.emailData : null;
+            const selectionKey = this._getSelectionKey(messageId, emailData);
+            const attachmentService = this.container.resolve('attachmentService');
+            const selectedNames = attachmentService.getSelectedAttachmentNames(selectionKey);
+            if (selectedNames === null || selectedNames.length === 0) {
+                return null;
+            }
+
             const section = this.sectionWithHeader('📋 Attachment Mappings');
             const attachmentMappingRepo = this.container.resolve('attachmentMappingRepo');
             const enabledMappings = attachmentMappingRepo.getEnabled();
             const mappingKeys = Object.keys(enabledMappings);
 
-            const config = this.configRepo.getAll();
             const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Attachment DB';
             section.addWidget(this.textParagraph(`Database: <b>${attachmentDbName}</b>`));
 
@@ -1510,12 +1614,13 @@ _buildEmailDetailsSection(messageId, status) {
         const emailData = extracted ? extracted.emailData : null;
         if (!emailData) return this._getMappingValueSnippet(mapping, null, null);
 
+        const selectionKey = this._getSelectionKey(messageId, emailData);
         const attachments = this._getAttachmentsForMessage(messageId, emailData);
         const attachmentService = this.container.resolve('attachmentService');
-        const selectedNames = attachmentService.getSelectedAttachmentNames(messageId);
-        const selected = selectedNames.length > 0
+        const selectedNames = attachmentService.getSelectedAttachmentNames(selectionKey);
+        const selected = selectedNames && selectedNames.length > 0
             ? attachments.find(att => selectedNames.includes(att.getName()))
-            : attachments[0];
+            : (selectedNames === null ? null : attachments[0]);
 
         const attachmentData = selected ? new AttachmentData(emailData, selected, { attachmentIndex: 0 }) : null;
         return this._getMappingValueSnippet(mapping, emailData, attachmentData);

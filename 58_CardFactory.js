@@ -289,49 +289,70 @@ class CardFactory {
     if (status.hasApiKey && status.hasDatabaseId) {
       const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Selected';
       const filesPropertyName = 'Attachments';
+      const useSeparateDb = config.attachmentUseSeparateDatabase === true;
 
+      const attachmentToggle = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.CHECK_BOX)
+        .setFieldName('attachment_use_separate_db')
+        .addItem('Save attachments to a separate database', 'true', useSeparateDb);
+
+      attachmentsSection.addWidget(attachmentToggle);
       attachmentsSection.addWidget(
         CardService.newTextParagraph()
-          .setText(`Attachment DB: <b>${attachmentDbName}</b>`)
+          .setText('<font color="#5F6368"><i>Enable to map attachments into a different database.</i></font>')
       );
-      attachmentsSection.addWidget(
-        CardService.newTextParagraph()
-          .setText(attachmentMappingRepo.getEnabledCount() > 0
-            ? `${attachmentMappingRepo.getEnabledCount()} mappings configured`
-            : 'Not configured')
-      );
-      attachmentsSection.addWidget(
-        CardService.newTextParagraph()
-          .setText(`Files Property: <b>${filesPropertyName}</b>`)
-      );
+
+      if (!useSeparateDb) {
+        attachmentsSection.addWidget(
+          CardService.newTextParagraph()
+            .setText('<i>Attachment mappings are disabled until this is enabled.</i>')
+        );
+        card.addSection(attachmentsSection);
+      } else {
+        attachmentsSection.addWidget(
+          CardService.newTextParagraph()
+            .setText(`Attachment DB: <b>${attachmentDbName}</b>`)
+        );
+        attachmentsSection.addWidget(
+          CardService.newTextParagraph()
+            .setText(attachmentMappingRepo.getEnabledCount() > 0
+              ? `${attachmentMappingRepo.getEnabledCount()} mappings configured`
+              : 'Not configured')
+        );
+        attachmentsSection.addWidget(
+          CardService.newTextParagraph()
+            .setText(`Files Property: <b>${filesPropertyName}</b>`)
+        );
+
+        attachmentsSection.addWidget(
+          CardService.newButtonSet()
+            .addButton(
+            CardService.newTextButton()
+              .setText('📎 Attachment Mappings')
+                .setOnClickAction(
+                  CardService.newAction()
+                    .setFunctionName('showAttachmentMappingsConfiguration')
+                )
+            )
+            .addButton(
+              CardService.newTextButton()
+                .setText('⚙️ Attachment Settings')
+                .setOnClickAction(
+                  CardService.newAction()
+                    .setFunctionName('showAttachmentsConfiguration')
+                )
+            )
+        );
+
+        card.addSection(attachmentsSection);
+      }
     } else {
       attachmentsSection.addWidget(
         CardService.newTextParagraph()
           .setText('<font color="#FF6B6B">⚠️ Configure Notion connection first</font>')
       );
+      card.addSection(attachmentsSection);
     }
-
-    attachmentsSection.addWidget(
-      CardService.newButtonSet()
-        .addButton(
-        CardService.newTextButton()
-          .setText('📎 Attachment Mappings')
-            .setOnClickAction(
-              CardService.newAction()
-                .setFunctionName('showAttachmentMappingsConfiguration')
-            )
-        )
-        .addButton(
-          CardService.newTextButton()
-            .setText('⚙️ Attachment Settings')
-            .setOnClickAction(
-              CardService.newAction()
-                .setFunctionName('showAttachmentsConfiguration')
-            )
-        )
-    );
-
-    card.addSection(attachmentsSection);
 
     // Actions
     let reauthUrl = '';
@@ -344,6 +365,20 @@ class CardFactory {
 
     card.addSection(
       CardService.newCardSection()
+        .setHeader('Actions')
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('<b>Save settings</b> - persist API key and options')
+        )
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('<b>Reauthorize</b> - refresh Drive permissions')
+        )
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText('<b>Test</b> - verify Notion connection')
+        )
+        .addWidget(CardService.newDivider())
         .addWidget(
           CardService.newButtonSet()
             .addButton(
@@ -372,10 +407,10 @@ class CardFactory {
             )
             .addButton(
               CardService.newTextButton()
-                .setText('🏠 Home')
+                .setText('↩️ Back to Preview')
                 .setOnClickAction(
                   CardService.newAction()
-                    .setFunctionName('onG2NHomepage')
+                    .setFunctionName('onG2NGmailMessage')
                 )
             )
         )
@@ -448,14 +483,6 @@ class CardFactory {
                 .setOnClickAction(
                   CardService.newAction()
                     .setFunctionName('showDatabaseSelection')
-                )
-            )
-            .addButton(
-              CardService.newTextButton()
-                .setText('🏠 Home')
-                .setOnClickAction(
-                  CardService.newAction()
-                    .setFunctionName('onG2NHomepage')
                 )
             )
         )
@@ -563,7 +590,7 @@ class CardFactory {
               .setText('🔄 Refresh')
               .setOnClickAction(
                 CardService.newAction()
-                  .setFunctionName('onG2NHomepage')
+                  .setFunctionName('showG2NSettings')
               )
           )
       );

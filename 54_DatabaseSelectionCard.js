@@ -47,7 +47,7 @@ class DatabaseSelectionCard extends BaseCardRenderer {
       const actions = CardService.newCardSection().addWidget(this.buttonSet(
         this.newButton('✅ Select', 'saveDatabaseSelection'),
         this.newButton('🔄 Refresh', 'showDatabaseSelection'),
-        this.newButton('🏠 Home', 'onG2NHomepage')
+        this.newButton('⚙️ Settings', 'showG2NSettings')
       ));
 
       return this.buildCard(header, [section, actions]);

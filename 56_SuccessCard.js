@@ -86,13 +86,13 @@ class SuccessCard {
       );
     }
 
-    // 2. Simple Home button to get back to the start
+    // 2. Settings button to manage configuration
     buttonSet.addButton(
       CardService.newTextButton()
-        .setText('🏠 Home')
+        .setText('⚙️ Settings')
         .setOnClickAction(
           CardService.newAction()
-            .setFunctionName('onG2NHomepage')
+            .setFunctionName('showG2NSettings')
         )
     );
 

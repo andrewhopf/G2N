@@ -56,7 +56,7 @@ class HomepageCard extends BaseCardRenderer {
         this.sectionWithHeader('🔧 Tools')
           .addWidget(this.buttonSet(
             this.newButton('⚙️ Settings', 'showG2NSettings'),
-            this.newButton('🔄 Refresh', 'onG2NHomepage')
+            this.newButton('🔄 Refresh', 'showG2NSettings')
           ))
       );
 

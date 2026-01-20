@@ -32,12 +32,15 @@
       "name": "Gmail to Notion",
       "logoUrl": "https://www.gstatic.com/images/icons/material/system/1x/bookmark_white_24dp.png",
       "homepageTrigger": {
-        "runFunction": "onG2NHomepage",
+        "runFunction": "showG2NSettings",
         "enabled": true
       },
       "universalActions": [{
         "label": "Settings",
         "runFunction": "showG2NSettings"
+      },{
+        "label": "Preview",
+        "runFunction": "showPreviewFromMenu"
       }]
     },
     "gmail": {

@@ -26,6 +26,7 @@ class PageService {
    * @returns {Object} created page info (id, url, createdTime)
    */
   createPageFromEmail(emailData) {
+    const startedAt = Date.now();
     const config = this.configRepo.getAll();
     if (!config.apiKey) throw new ConfigError('API key not configured', 'apiKey');
     if (!config.databaseId) throw new ConfigError('Database not selected', 'databaseId');
@@ -37,7 +38,12 @@ class PageService {
       messageId: emailData.messageId
     });
 
+    const mappingStartedAt = Date.now();
     const mappingResult = this.mappingService.applyMappings(emailData, apiKey);
+    this.logger.info('Email mapping timing', {
+      messageId: emailData.messageId,
+      durationMs: Date.now() - mappingStartedAt
+    });
     let properties = mappingResult.properties || {};
 
     // ✅ FIX A: Filter out stale properties that don't exist in current schema
@@ -128,11 +134,25 @@ class PageService {
       }
     }
 
+    const contentStartedAt = Date.now();
     let children = (this.contentBuilder && typeof this.contentBuilder.buildEmailContent === 'function')
       ? this.contentBuilder.buildEmailContent(emailData)
       : [];
+    this.logger.info('Email content build timing', {
+      messageId: emailData.messageId,
+      durationMs: Date.now() - contentStartedAt,
+      blockCount: Array.isArray(children) ? children.length : 0
+    });
 
-    if (config.attachmentEmbedEmailPage) {
+    let embedAttachments = config.attachmentEmbedEmailPage;
+    if (!config.attachmentUseSeparateDatabase) {
+      const selectedNames = this.attachmentService.getSelectedAttachmentNames(emailData.messageId);
+      if (Array.isArray(selectedNames) && selectedNames.length > 0) {
+        embedAttachments = true;
+      }
+    }
+
+    if (embedAttachments) {
       try {
         const handling = 'upload_to_drive';
         if (handling !== 'skip' && handling !== 'link_only') {
@@ -186,7 +206,16 @@ class PageService {
       hasTitle: Object.values(properties).some(p => p && p.title)
     });
 
+    const createStartedAt = Date.now();
     const page = this.notionService.createPage(properties, children);
+    this.logger.info('Email page create timing', {
+      messageId: emailData.messageId,
+      durationMs: Date.now() - createStartedAt
+    });
+    this.logger.info('Email page total timing', {
+      messageId: emailData.messageId,
+      durationMs: Date.now() - startedAt
+    });
     return page;
   }
 

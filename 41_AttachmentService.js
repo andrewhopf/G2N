@@ -42,6 +42,7 @@ class AttachmentService {
       return [];
     }
 
+    const startedAt = Date.now();
     this._logger.info('Processing attachments', { count: attachments.length, handling });
 
     const processed = [];
@@ -63,7 +64,8 @@ class AttachmentService {
 
     this._logger.info('Attachments processed', { 
       total: attachments.length, 
-      processed: processed.length 
+      processed: processed.length,
+      durationMs: Date.now() - startedAt
     });
 
     return processed;
@@ -155,6 +157,7 @@ class AttachmentService {
    * @private
    */
   _processAttachment(attachment, emailSubject, folder, handling) {
+    const startedAt = Date.now();
     const name = attachment.getName();
     const size = attachment.getSize();
     const contentType = attachment.getContentType();
@@ -194,6 +197,12 @@ class AttachmentService {
     // Upload to Google Drive
     const file = this._uploadToDrive(attachment, emailSubject, folder);
     
+    this._logger.info('Attachment processed timing', {
+      name: name,
+      size: size,
+      durationMs: Date.now() - startedAt
+    });
+
     return {
       name: this._truncateFileName(file.getName()),
       sourceName: sourceName,
@@ -222,6 +231,7 @@ class AttachmentService {
    * @private
    */
   _uploadToDrive(attachment, emailSubject, folder) {
+    const startedAt = Date.now();
     const blob = attachment.copyBlob();
     const originalName = attachment.getName();
     
@@ -249,6 +259,11 @@ class AttachmentService {
         url: file.getUrl(),
         folderId: folder.getId()
       });
+      this._logger.info('Drive upload timing', {
+        name: safeName,
+        durationMs: Date.now() - startedAt,
+        method: 'driveapp'
+      });
       
       return file;
     } catch (error) {
@@ -256,7 +271,13 @@ class AttachmentService {
         name: safeName,
         error: error.message
       });
-      return this._uploadToDriveAdvanced(blob, safeName, emailSubject, folder.getId());
+      const file = this._uploadToDriveAdvanced(blob, safeName, emailSubject, folder.getId());
+      this._logger.info('Drive upload timing', {
+        name: safeName,
+        durationMs: Date.now() - startedAt,
+        method: 'advanced'
+      });
+      return file;
     }
   }
 
@@ -265,6 +286,20 @@ class AttachmentService {
    * @private
    */
   _getOrCreateFolder() {
+    const startedAt = Date.now();
+    const cachedFolder = this._getCachedFolder();
+    if (cachedFolder) {
+      this._logger.info('Using cached attachments folder', {
+        name: cachedFolder.getName(),
+        id: cachedFolder.getId()
+      });
+      this._logger.info('Drive folder timing', {
+        name: cachedFolder.getName(),
+        durationMs: Date.now() - startedAt,
+        result: 'cached'
+      });
+      return cachedFolder;
+    }
     try {
       const folders = this._withDriveRetry(
         () => DriveApp.getFoldersByName(this._folderName),
@@ -277,9 +312,15 @@ class AttachmentService {
           () => existing.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT),
           'setFolderSharing'
         );
+        this._cacheFolderId(existing.getId());
         this._logger.info('Using existing attachments folder', { 
           name: this._folderName, 
           id: existing.getId() 
+        });
+        this._logger.info('Drive folder timing', {
+          name: this._folderName,
+          durationMs: Date.now() - startedAt,
+          result: 'existing'
         });
         return existing;
       }
@@ -297,11 +338,17 @@ class AttachmentService {
         () => folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT),
         'setFolderSharing'
       );
+      this._cacheFolderId(folder.getId());
       
       this._logger.info('Created attachments folder', { 
         name: this._folderName, 
         id: folder.getId(),
         url: folder.getUrl()
+      });
+      this._logger.info('Drive folder timing', {
+        name: this._folderName,
+        durationMs: Date.now() - startedAt,
+        result: 'created'
       });
       
       return folder;
@@ -318,6 +365,8 @@ class AttachmentService {
    * @private
    */
   _getOrCreateFolderAdvanced() {
+    const cachedFolder = this._getCachedFolder();
+    if (cachedFolder) return cachedFolder;
     const escapedName = this._folderName.replace(/'/g, "\\'");
     const query = `mimeType = 'application/vnd.google-apps.folder' and title = '${escapedName}' and trashed = false`;
     const result = Drive.Files.list({ q: query, maxResults: 1 });
@@ -335,6 +384,7 @@ class AttachmentService {
         name: this._folderName,
         id: existing.id
       });
+      this._cacheFolderId(existing.id);
       return DriveApp.getFolderById(existing.id);
     }
 
@@ -355,7 +405,40 @@ class AttachmentService {
       id: created.id,
       url: folder.getUrl()
     });
+    this._cacheFolderId(created.id);
     return folder;
+  }
+
+  /**
+   * Read cached attachments folder
+   * @private
+   * @returns {Folder|null}
+   */
+  _getCachedFolder() {
+    try {
+      const config = this._configRepo.getAll();
+      const folderId = config.attachmentsFolderId;
+      if (!folderId) return null;
+      const folder = DriveApp.getFolderById(folderId);
+      if (!folder) return null;
+      return folder;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Cache attachments folder ID
+   * @private
+   * @param {string} folderId
+   */
+  _cacheFolderId(folderId) {
+    if (!folderId) return;
+    try {
+      this._configRepo.set({ attachmentsFolderId: folderId });
+    } catch (error) {
+      // Ignore cache errors
+    }
   }
 
   /**
@@ -496,12 +579,13 @@ class AttachmentService {
     if (!messageId) return [];
     try {
       const props = PropertiesService.getUserProperties();
-      const raw = props.getProperty(`G2N_ATTACHMENT_SELECTION_${messageId}`) || '[]';
+      const raw = props.getProperty(`G2N_ATTACHMENT_SELECTION_${messageId}`);
+      if (!raw) return null;
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed) ? parsed : null;
     } catch (error) {
       this._logger.warn('Failed to read attachment selection', { messageId, error: error.message });
-      return [];
+      return null;
     }
   }
 
@@ -518,6 +602,20 @@ class AttachmentService {
       props.setProperty(`G2N_ATTACHMENT_SELECTION_${messageId}`, JSON.stringify(safeNames));
     } catch (error) {
       this._logger.warn('Failed to save attachment selection', { messageId, error: error.message });
+    }
+  }
+
+  /**
+   * Clear selected attachments for a message
+   * @param {string} messageId
+   */
+  clearSelectedAttachmentNames(messageId) {
+    if (!messageId) return;
+    try {
+      const props = PropertiesService.getUserProperties();
+      props.deleteProperty(`G2N_ATTACHMENT_SELECTION_${messageId}`);
+    } catch (error) {
+      this._logger.warn('Failed to clear attachment selection', { messageId, error: error.message });
     }
   }
 
@@ -611,7 +709,8 @@ class AttachmentService {
   filterSelectedAttachments(attachments, messageId) {
     if (!attachments || attachments.length === 0) return [];
     const selectedNames = this.getSelectedAttachmentNames(messageId);
-    if (!selectedNames || selectedNames.length === 0) return attachments;
+    if (selectedNames === null) return attachments;
+    if (selectedNames.length === 0) return [];
     return attachments.filter(att => selectedNames.includes(att.getName()));
   }
 

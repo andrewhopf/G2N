@@ -19,6 +19,8 @@ class NotionAdapter {
         this._baseUrl = 'https://api.notion.com/v1';
         /** @private */
         this._version = '2022-06-28';
+        /** @private */
+        this._scriptCache = null;
     }
 
     /**
@@ -35,6 +37,7 @@ class NotionAdapter {
             throw new NotionError('API key is required', null, 'missing_api_key');
         }
         
+        const startedAt = Date.now();
         const options = {
             method: method,
             headers: {
@@ -53,6 +56,13 @@ class NotionAdapter {
             const response = UrlFetchApp.fetch(`${this._baseUrl}${endpoint}`, options);
             const code = response.getResponseCode();
             const content = response.getContentText();
+            const durationMs = Date.now() - startedAt;
+            this._logger.info('Notion API request', {
+                endpoint: endpoint,
+                method: method,
+                status: code,
+                durationMs: durationMs
+            });
             
             if (code >= 200 && code < 300) {
                 return JSON.parse(content);
@@ -66,6 +76,13 @@ class NotionAdapter {
                 errorData.code
             );
         } catch (error) {
+            const durationMs = Date.now() - startedAt;
+            this._logger.error('Notion API request failed', {
+                endpoint: endpoint,
+                method: method,
+                durationMs: durationMs,
+                error: error.message
+            });
             if (error instanceof NotionError) throw error;
             throw new NotionError(`API request failed: ${error.message}`, null);
         }
@@ -160,11 +177,14 @@ class NotionAdapter {
      * @returns {Object} Database schema
      */
     getDatabase(databaseId, apiKey) {
-        const cacheKey = `schema_${databaseId}`;
+        const cleanId = this._normalizeId(databaseId);
+        const cacheKey = `schema_${cleanId}`;
+        const cachedScript = this._getScriptCachedJson(cacheKey);
+        if (cachedScript) return cachedScript;
+
         const cached = this._cache.get(cacheKey);
         if (cached) return cached;
         
-        const cleanId = this._normalizeId(databaseId);
         const response = this.request(`/databases/${cleanId}`, 'GET', null, apiKey);
         
         const schema = {
@@ -175,6 +195,7 @@ class NotionAdapter {
         };
         
         this._cache.set(cacheKey, schema, 120); // Cache for 2 minutes
+        this._setScriptCachedJson(cacheKey, schema, 300);
         return schema;
     }
 
@@ -476,6 +497,50 @@ getUsers(apiKey) {
      */
     _normalizeId(id) {
         return id.replace(/-/g, '');
+    }
+
+    /**
+     * Get script cache lazily
+     * @private
+     */
+    _getScriptCache() {
+        if (!this._scriptCache) {
+            this._scriptCache = CacheService.getScriptCache();
+        }
+        return this._scriptCache;
+    }
+
+    /**
+     * Read JSON from script cache
+     * @private
+     * @param {string} key
+     * @returns {Object|null}
+     */
+    _getScriptCachedJson(key) {
+        try {
+            const cache = this._getScriptCache();
+            const raw = cache.get(key);
+            if (!raw) return null;
+            return JSON.parse(raw);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    /**
+     * Write JSON to script cache
+     * @private
+     * @param {string} key
+     * @param {Object} value
+     * @param {number} ttlSeconds
+     */
+    _setScriptCachedJson(key, value, ttlSeconds) {
+        try {
+            const cache = this._getScriptCache();
+            cache.put(key, JSON.stringify(value), ttlSeconds);
+        } catch (error) {
+            // ignore cache errors
+        }
     }
 
     /**

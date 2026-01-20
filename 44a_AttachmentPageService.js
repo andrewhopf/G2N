@@ -33,10 +33,15 @@ class AttachmentPageService {
    * @returns {{created: number, skipped: number, pages: Array}}
    */
   createPagesFromEmail(emailData) {
+    const startedAt = Date.now();
     const config = this._config.getAll();
 
     if (!config.apiKey || !config.attachmentDatabaseId) {
       this._logger.debug('Attachment save skipped - no attachment database configured');
+      return { created: 0, skipped: 0, pages: [] };
+    }
+    if (!config.attachmentUseSeparateDatabase) {
+      this._logger.debug('Attachment save skipped - separate attachment database disabled');
       return { created: 0, skipped: 0, pages: [] };
     }
 
@@ -101,16 +106,43 @@ class AttachmentPageService {
     const handling = 'upload_to_drive';
     let processedFiles = [];
     try {
-      processedFiles = this._attachments.processAttachments(
-        attachments,
-        emailData.subject,
-        handling
-      );
-      this._attachments.setLastProcessedAttachments(
-        emailData.messageId,
-        processedFiles,
-        handling
-      );
+      const cached = this._attachments.getLastProcessedAttachments(emailData.messageId);
+      if (cached && cached.handling === handling) {
+        processedFiles = Array.isArray(cached.processed) ? cached.processed.slice() : [];
+      }
+
+      const missing = attachments.filter(att => {
+        return !this._attachments.findProcessedAttachment(
+          processedFiles,
+          att.getName(),
+          att.getSize()
+        );
+      });
+
+      if (missing.length > 0) {
+        const processingStartedAt = Date.now();
+        const newlyProcessed = this._attachments.processAttachments(
+          missing,
+          emailData.subject,
+          handling
+        );
+        this._logger.info('Attachment processing timing', {
+          messageId: emailData.messageId,
+          durationMs: Date.now() - processingStartedAt,
+          processed: newlyProcessed.length
+        });
+        processedFiles = processedFiles.concat(newlyProcessed);
+        this._attachments.setLastProcessedAttachments(
+          emailData.messageId,
+          processedFiles,
+          handling
+        );
+      } else if (processedFiles.length > 0) {
+        this._logger.info('Attachment processing reused cached files', {
+          messageId: emailData.messageId,
+          processed: processedFiles.length
+        });
+      }
     } catch (error) {
       this._logger.warn('Failed to process attachments for pages', { error: error.message });
     }
@@ -121,6 +153,7 @@ class AttachmentPageService {
           attachmentIndex: index
         });
 
+        const pageStartedAt = Date.now();
         const mappingResult = this._mapping.applyMappings(attachmentData, config.apiKey);
         let properties = mappingResult.properties || {};
 
@@ -174,6 +207,10 @@ class AttachmentPageService {
           children,
           config.apiKey
         );
+        this._logger.info('Attachment page create timing', {
+          name: attachment.getName(),
+          durationMs: Date.now() - pageStartedAt
+        });
 
         createdPages.push(page);
       } catch (error) {
@@ -184,11 +221,18 @@ class AttachmentPageService {
       }
     });
 
-    return {
+    const result = {
       created: createdPages.length,
       skipped: attachments.length - createdPages.length,
       pages: createdPages
     };
+    this._logger.info('Attachment pages total timing', {
+      messageId: emailData.messageId,
+      durationMs: Date.now() - startedAt,
+      created: result.created,
+      skipped: result.skipped
+    });
+    return result;
   }
 
   /**

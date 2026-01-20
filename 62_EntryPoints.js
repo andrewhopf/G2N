@@ -43,7 +43,7 @@ function _buildErrorCardSafely(title, message) {
               CardService.newTextButton()
                 .setText('🔄 Retry')
                 .setOnClickAction(
-                  CardService.newAction().setFunctionName('onG2NHomepage')
+                  CardService.newAction().setFunctionName('showG2NSettings')
                 )
             )
         )
@@ -58,7 +58,7 @@ function _buildErrorCardSafely(title, message) {
  */
 function onG2NHomepage(event) {
   try {
-    return getApp().showHomepage(event);
+    return getApp().showSettings(event);
   } catch (error) {
     console.error('Homepage error:', error);
     return _buildErrorCardSafely('Homepage Error', error.message || 'Unknown error');
@@ -90,6 +90,20 @@ function showEmailPreview(event) {
   } catch (error) {
     console.error('Email preview error:', error);
     return _buildErrorCardSafely('Error', error.message || 'Unknown error');
+  }
+}
+
+/**
+ * Show preview from the add-on menu
+ * @param {Object} event - GAS event
+ * @returns {CardService.Card} Email preview card
+ */
+function showPreviewFromMenu(event) {
+  try {
+    return getApp().showEmailPreview(event);
+  } catch (error) {
+    console.error('Preview menu error:', error);
+    return _buildErrorCardSafely('Preview Error', error.message || 'Unknown error');
   }
 }
 
@@ -297,6 +311,10 @@ function saveConfiguration(event) {
     const formInput = event?.formInput || {};
     const newApiKey = formInput.api_key || '';
     const fileHandling = formInput.file_handling || 'upload_to_drive';
+    const attachmentUseSeparateInput = formInput.attachment_use_separate_db;
+    const attachmentUseSeparateDatabase = Array.isArray(attachmentUseSeparateInput)
+      ? attachmentUseSeparateInput.includes('true')
+      : attachmentUseSeparateInput === 'true';
     
     if (!newApiKey) {
       return CardService.newActionResponseBuilder()
@@ -313,7 +331,8 @@ function saveConfiguration(event) {
     const oldConfig = configRepo.getAll();
     const propertiesToSet = {
       apiKey: newApiKey,
-      fileHandling: fileHandling
+      fileHandling: fileHandling,
+      attachmentUseSeparateDatabase: attachmentUseSeparateDatabase
     };
     
     let notificationText = '✅ Settings saved!';
@@ -402,10 +421,11 @@ function saveSelectedAttachments(event) {
     const selected = formInput.selected_attachments || [];
     const selectedNames = Array.isArray(selected) ? selected : [selected];
     const totalCount = parseInt(event?.parameters?.totalCount || '0', 10) || 0;
+    const selectionKey = event?.parameters?.selectionKey || messageId;
 
     const attachmentService = container.resolve('attachmentService');
-    attachmentService.setSelectedAttachmentNames(messageId, selectedNames);
-    attachmentService.setLastSelectionSummary(messageId, selectedNames.length, totalCount);
+    attachmentService.setSelectedAttachmentNames(selectionKey, selectedNames);
+    attachmentService.setLastSelectionSummary(selectionKey, selectedNames.length, totalCount);
 
     return CardService.newActionResponseBuilder()
       .setNotification(
@@ -509,6 +529,14 @@ function forceDriveAuthorization(event) {
 function showAttachmentMappingsConfiguration(event) {
   try {
     getApp(); // Initialize
+    const configRepo = container.resolve('configRepo');
+    const config = configRepo.getAll();
+    if (!config.attachmentUseSeparateDatabase) {
+      return _buildErrorCardSafely(
+        'Attachment Mappings Disabled',
+        'Enable "Save attachments to a separate database" in Settings to configure attachment mappings.'
+      );
+    }
     const page = event?.parameters?.targetPage
       ? parseInt(event.parameters.targetPage, 10)
       : 0;
@@ -700,6 +728,7 @@ function cancelMappingsConfiguration(event) {
  */
 function cancelAttachmentMappingsConfiguration(event) {
   try {
+    _clearPendingAttachmentEmail();
     return CardService.newActionResponseBuilder()
       .setNavigation(
         CardService.newNavigation().popCard()
@@ -727,8 +756,8 @@ function finishMappingsConfiguration(event) {
     // Save current page
     _saveMappingsFromForm(event.formInput);
     
-    // Return to homepage
-    const card = buildHomepageCard();
+    // Return to settings
+    const card = buildSettingsCard();
     
     return CardService.newActionResponseBuilder()
       .setNotification(
@@ -760,6 +789,58 @@ function finishAttachmentMappingsConfiguration(event) {
     getApp(); // Initialize
 
     _saveAttachmentMappingsFromForm(event.formInput);
+
+    const pending = _getPendingAttachmentEmail();
+    if (pending && pending.messageId) {
+      const configRepo = container.resolve('configRepo');
+      const emailService = container.resolve('emailService');
+      const attachmentPageService = container.resolve('attachmentPageService');
+      const attachmentMappingRepo = container.resolve('attachmentMappingRepo');
+      const config = configRepo.getAll();
+
+      const emailData = emailService.extractById(pending.messageId);
+      if (!emailData) {
+        _clearPendingAttachmentEmail();
+        return CardService.newActionResponseBuilder()
+          .setNotification(
+            CardService.newNotification().setText('❌ Failed to load email for attachments')
+          )
+          .build();
+      }
+
+      _autoLinkAttachmentRelations(
+        attachmentMappingRepo,
+        config.databaseId,
+        pending
+      );
+
+      const attachmentResult = attachmentPageService.createPagesFromEmail(emailData);
+      const attachmentService = container.resolve('attachmentService');
+      attachmentService.clearSelectedAttachmentNames(pending.messageId);
+      if (emailData.messageId && emailData.messageId !== pending.messageId) {
+        attachmentService.clearSelectedAttachmentNames(emailData.messageId);
+      }
+      attachmentService.setLastSelectionSummary(pending.messageId, 0, 0);
+      _clearPendingAttachmentEmail();
+
+      const successCard = buildSuccessCard({
+        emailId: pending.messageId,
+        subject: pending.subject || emailData.subject,
+        pageUrl: pending.pageUrl,
+        attachmentsSaved: attachmentResult.created
+      });
+
+      return CardService.newActionResponseBuilder()
+        .setNotification(
+          CardService.newNotification().setText('✅ Attachments saved!')
+        )
+        .setNavigation(
+          CardService.newNavigation()
+            .popToRoot()
+            .pushCard(successCard)
+        )
+        .build();
+    }
 
     const card = buildSettingsCard();
 
@@ -1003,7 +1084,7 @@ function testNotionConnection(event) {
  */
 function buildHomepageCard() {
   try {
-    return getApp().showHomepage();
+    return getApp().showSettings();
   } catch (error) {
     console.error('buildHomepageCard error:', error);
     return _buildErrorCardSafely('Homepage Error', error.message || 'Unknown error');
@@ -1082,6 +1163,90 @@ function buildAttachmentMappingsCard(page) {
     console.error('buildAttachmentMappingsCard error:', error);
     return _buildErrorCardSafely('Attachment Mappings Error', error.message || 'Unknown error');
   }
+}
+
+/**
+ * Get pending email context for attachment save flow
+ * @returns {Object|string}
+ */
+function _getPendingAttachmentEmail() {
+  try {
+    getApp();
+    const configRepo = container.resolve('configRepo');
+    const config = configRepo.getAll();
+    return config.pendingAttachmentEmail || '';
+  } catch (error) {
+    return '';
+  }
+}
+
+/**
+ * Clear pending email context for attachment save flow
+ */
+function _clearPendingAttachmentEmail() {
+  try {
+    getApp();
+    const configRepo = container.resolve('configRepo');
+    configRepo.set({ pendingAttachmentEmail: '' });
+  } catch (error) {
+    // ignore
+  }
+}
+
+/**
+ * Auto-link attachment relation mappings to the saved email page
+ * @param {MappingRepository} attachmentMappingRepo
+ * @param {string} emailDatabaseId
+ * @param {Object} pending
+ */
+function _autoLinkAttachmentRelations(attachmentMappingRepo, emailDatabaseId, pending) {
+  if (!attachmentMappingRepo || !pending || !pending.pageId) return;
+  const normalizedEmailDbId = _normalizeId(emailDatabaseId);
+  if (!normalizedEmailDbId) return;
+
+  const mappings = attachmentMappingRepo.getAll();
+  let updated = false;
+
+  Object.keys(mappings).forEach(propId => {
+    const mapping = mappings[propId];
+    if (!mapping) return;
+    const enabled = mapping.enabled === true || mapping.enabled === 'true';
+    if (!enabled) return;
+    if (!mapping.isRelation && mapping.type !== 'relation') return;
+    if (mapping.selectedPages && mapping.selectedPages.length > 0) return;
+
+    const relationConfig = mapping.relationConfig || {};
+    const relatedDbId = _normalizeId(
+      relationConfig.database_id ||
+      relationConfig.data_source_id ||
+      relationConfig.dual_property?.database_id ||
+      ''
+    );
+
+    if (relatedDbId && relatedDbId === normalizedEmailDbId) {
+      mapping.selectedPages = [
+        {
+          id: pending.pageId,
+          title: pending.subject || 'Email'
+        }
+      ];
+      mappings[propId] = mapping;
+      updated = true;
+    }
+  });
+
+  if (updated) {
+    attachmentMappingRepo.saveAll(mappings);
+  }
+}
+
+/**
+ * Normalize Notion IDs for comparisons
+ * @param {string} value
+ * @returns {string}
+ */
+function _normalizeId(value) {
+  return String(value || '').replace(/-/g, '').toLowerCase();
 }
 
 // Add this debug function to File 62_EntryPoints.js

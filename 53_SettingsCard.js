@@ -66,7 +66,7 @@ class SettingsCard extends BaseCardRenderer {
       }
 
 // === SECTION 4: Attachments === 
-const attachmentsSection = CardService.newCardSection()
+      const attachmentsSection = CardService.newCardSection()
   .setHeader('📎 Attachment Mappings');
 
 try {
@@ -79,22 +79,39 @@ try {
 
   // Show status
   if (hasApiKey && hasDatabase) {
-    if (attachmentDbId) {
-      attachmentsSection.addWidget(this.textParagraph(
-        '<b>Attachment Database:</b> ' + (config.attachmentDatabaseName || config.databaseName || 'Selected')
-      ));
-    }
-    
+    const useSeparateDb = config.attachmentUseSeparateDatabase === true;
+    attachmentsSection.addWidget(
+      CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.CHECK_BOX)
+        .setFieldName('attachment_use_separate_db')
+        .addItem('Save attachments to a separate database', 'true', useSeparateDb)
+    );
     attachmentsSection.addWidget(this.textParagraph(
-      '<b>Files Property:</b> ' + filesPropertyName
+      '<font color="#5F6368"><i>Enable to map attachments into a different database.</i></font>'
     ));
 
-    const embedEmail = config.attachmentEmbedEmailPage ? 'Email page' : '';
-    const embedAttachment = config.attachmentEmbedAttachmentPage ? 'Attachment pages' : '';
-    const embedTargets = [embedEmail, embedAttachment].filter(Boolean).join(', ');
-    attachmentsSection.addWidget(this.textParagraph(
-      '<b>Embed in Pages:</b> ' + (embedTargets || 'None')
-    ));
+    if (!useSeparateDb) {
+      attachmentsSection.addWidget(this.textParagraph(
+        '<i>Attachment mappings are disabled until this is enabled.</i>'
+      ));
+    } else {
+      if (attachmentDbId) {
+        attachmentsSection.addWidget(this.textParagraph(
+          '<b>Attachment Database:</b> ' + (config.attachmentDatabaseName || config.databaseName || 'Selected')
+        ));
+      }
+      
+      attachmentsSection.addWidget(this.textParagraph(
+        '<b>Files Property:</b> ' + filesPropertyName
+      ));
+
+      const embedEmail = config.attachmentEmbedEmailPage ? 'Email page' : '';
+      const embedAttachment = config.attachmentEmbedAttachmentPage ? 'Attachment pages' : '';
+      const embedTargets = [embedEmail, embedAttachment].filter(Boolean).join(', ');
+      attachmentsSection.addWidget(this.textParagraph(
+        '<b>Embed in Pages:</b> ' + (embedTargets || 'None')
+      ));
+    }
   } else {
     attachmentsSection.addWidget(this.textParagraph(
       '<font color="#FF6B6B">⚠️ Configure Notion connection first</font>'
@@ -108,19 +125,27 @@ try {
 }
 
 // Configuration button
-attachmentsSection.addWidget(this.buttonSet(
-  this.newButton('📎 Configure Attachments', 'showAttachmentsConfiguration')
-));
+if (config.attachmentUseSeparateDatabase) {
+  attachmentsSection.addWidget(this.buttonSet(
+    this.newButton('📎 Configure Attachments', 'showAttachmentsConfiguration')
+  ));
+}
 
 sections.push(attachmentsSection);
 
       // === SECTION 5: Actions ===
       const actionsSection = CardService.newCardSection()
+        .setHeader('Actions')
+        .addWidget(this.textParagraph('<b>Save settings</b> - persist API key and options'))
+        .addWidget(this.textParagraph('<b>Reauthorize</b> - refresh Drive permissions'))
+        .addWidget(this.textParagraph('<b>Test</b> - verify Notion connection'))
+        .addWidget(CardService.newDivider())
         .addWidget(
           this.buttonSet(
             this.newButton('💾 Save', 'saveConfiguration'),
-            this.newButton('↺ Reset', 'resetMappingsOnly'),
-            this.newButton('🏠 Home', 'onG2NHomepage')
+            this.newButton('🔐 Reauthorize', 'forceDriveAuthorization'),
+            this.newButton('🧪 Test', 'testNotionConnection'),
+            this.newButton('↩️ Back to Preview', 'onG2NGmailMessage')
           )
         );
       sections.push(actionsSection);

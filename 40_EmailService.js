@@ -25,13 +25,25 @@ class EmailService {
    * @returns {EmailData|null}
    */
   extractById(messageId) {
+    const startedAt = Date.now();
     this._logger.debug('Extracting email', { messageId });
 
     const rawData = this._gmail.getMessage(messageId);
     if (!rawData) {
       this._logger.warn('Could not retrieve email', { messageId });
+      this._logger.info('Email extract timing', {
+        messageId: messageId,
+        durationMs: Date.now() - startedAt,
+        found: false
+      });
       return null;
     }
+
+    this._logger.info('Email extract timing', {
+      messageId: messageId,
+      durationMs: Date.now() - startedAt,
+      found: true
+    });
 
     return new EmailData(rawData);
   }

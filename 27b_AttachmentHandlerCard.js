@@ -116,11 +116,7 @@ function showAttachmentsConfiguration(event) {
         .addButton(CardService.newTextButton()
           .setText('🔙 Back to Settings')
           .setOnClickAction(CardService.newAction()
-            .setFunctionName('showG2NSettings')))
-        .addButton(CardService.newTextButton()
-          .setText('🏠 Home')
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName('onG2NHomepage'))));
+            .setFunctionName('showG2NSettings'))));
     
     card.addSection(navSection);
     
@@ -313,11 +309,7 @@ function buildAttachmentsCard() {
         .addButton(CardService.newTextButton()
           .setText('🔙 Back to Settings')
           .setOnClickAction(CardService.newAction()
-            .setFunctionName('showG2NSettings')))
-        .addButton(CardService.newTextButton()
-          .setText('🏠 Home')
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName('onG2NHomepage'))));
+            .setFunctionName('showG2NSettings'))));
     
     card.addSection(navSection);
     
@@ -403,7 +395,7 @@ function _buildErrorCardSafely(title, message) {
         .addButton(CardService.newTextButton()
           .setText('🔄 Retry')
           .setOnClickAction(CardService.newAction()
-            .setFunctionName('onG2NHomepage')))
+            .setFunctionName('showG2NSettings')))
         .addButton(CardService.newTextButton()
           .setText('⚙️ Settings')
           .setOnClickAction(CardService.newAction()
@@ -601,6 +593,7 @@ function ensureAttachmentField(event) {
         attachmentDatabaseId: attachmentDbId,
         attachmentDatabaseName: attachmentDbName,
         fileHandling: fileHandling,
+        attachmentUseSeparateDatabase: true,
         attachmentEmbedEmailPage: embedEmailPage,
         attachmentEmbedAttachmentPage: embedAttachmentPage
         };

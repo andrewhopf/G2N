@@ -27,10 +27,13 @@ class ConfigRepository {
       attachmentMappings: '{}',
       filesPropertyName: 'Attachments',
       fileHandling: 'upload_to_drive',
+      attachmentUseSeparateDatabase: 'false',
       attachmentEmbedEmailPage: 'false',
       attachmentEmbedAttachmentPage: 'false',
       autoSave: 'false',
-      notifications: 'true'
+      notifications: 'true',
+      pendingAttachmentEmail: '',
+      attachmentsFolderId: ''
     };
     /** @private */
     this._keys = {
@@ -43,10 +46,13 @@ class ConfigRepository {
       attachmentMappings: 'G2N_ATTACHMENT_MAPPINGS',
       filesPropertyName: 'G2N_FILES_PROPERTY_NAME',
       fileHandling: 'G2N_FILE_HANDLING',
+      attachmentUseSeparateDatabase: 'G2N_ATTACHMENT_USE_SEPARATE_DATABASE',
       attachmentEmbedEmailPage: 'G2N_ATTACHMENT_EMBED_EMAIL_PAGE',
       attachmentEmbedAttachmentPage: 'G2N_ATTACHMENT_EMBED_ATTACHMENT_PAGE',
       autoSave: 'G2N_AUTO_SAVE',
-      notifications: 'G2N_NOTIFICATIONS'
+      notifications: 'G2N_NOTIFICATIONS',
+      pendingAttachmentEmail: 'G2N_PENDING_ATTACHMENT_EMAIL',
+      attachmentsFolderId: 'G2N_ATTACHMENTS_FOLDER_ID'
     };
   }
 
@@ -79,14 +85,34 @@ class ConfigRepository {
         attachmentMappings: props[this._keys.attachmentMappings] || this._defaults.attachmentMappings,
         filesPropertyName: props[this._keys.filesPropertyName] || this._defaults.filesPropertyName,
         fileHandling: props[this._keys.fileHandling] || this._defaults.fileHandling,
+        attachmentUseSeparateDatabase: props[this._keys.attachmentUseSeparateDatabase] === 'true',
         attachmentEmbedEmailPage: props[this._keys.attachmentEmbedEmailPage] === 'true',
         attachmentEmbedAttachmentPage: props[this._keys.attachmentEmbedAttachmentPage] === 'true',
         autoSave: props[this._keys.autoSave] === 'true',
-        notifications: props[this._keys.notifications] !== 'false'
+        notifications: props[this._keys.notifications] !== 'false',
+        pendingAttachmentEmail: this._parseJsonValue(
+          props[this._keys.pendingAttachmentEmail] || this._defaults.pendingAttachmentEmail
+        ),
+        attachmentsFolderId: props[this._keys.attachmentsFolderId] || this._defaults.attachmentsFolderId
       };
     } catch (error) {
       this._logger.error('Failed to get configuration', error);
       return { ...this._defaults };
+    }
+  }
+
+  /**
+   * Parse JSON value safely
+   * @private
+   * @param {string} value
+   * @returns {*}
+   */
+  _parseJsonValue(value) {
+    if (!value) return '';
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      return value;
     }
   }
 

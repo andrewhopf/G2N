@@ -61,7 +61,7 @@ class ErrorCard {
           .setText('🔄 Try Again')
           .setOnClickAction(
             CardService.newAction()
-              .setFunctionName(options.retryFunction || 'onG2NHomepage')
+              .setFunctionName(options.retryFunction || 'showG2NSettings')
           )
       );
     }
@@ -73,16 +73,6 @@ class ErrorCard {
         .setOnClickAction(
           CardService.newAction()
             .setFunctionName('showG2NSettings')
-        )
-    );
-
-    // Home button
-    buttonSet.addButton(
-      CardService.newTextButton()
-        .setText('🏠 Home')
-        .setOnClickAction(
-          CardService.newAction()
-            .setFunctionName('onG2NHomepage')
         )
     );
 

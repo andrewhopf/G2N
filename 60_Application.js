@@ -53,25 +53,78 @@ quickG2NSaveEmail(event) {
   }
 
   try {
-    // ❌ REMOVE duplicate check from here - it should only happen on preview
-    // Just execute the save without duplicate warnings
-    const result = this.saveEmail(messageId, skipDuplicateCheck);
+    const result = this._saveEmailOnly(messageId);
 
     if (result.success) {
-      // ✅ Build the success card
-      const successCard = buildSuccessCard(result.data);
+      const configRepo = this._container.resolve('configRepo');
+      const config = configRepo.getAll();
+      const useSeparateDb = config.attachmentUseSeparateDatabase === true;
+
+      if (useSeparateDb) {
+        const attachmentService = this._container.resolve('attachmentService');
+        const selectionKey = (result.emailData && result.emailData.messageId) || messageId;
+        const selectedNames = attachmentService.getSelectedAttachmentNames(selectionKey);
+        const hasSelection = Array.isArray(selectedNames) && selectedNames.length > 0;
+
+        if (!hasSelection) {
+          const successCard = buildSuccessCard({
+            emailId: messageId,
+            subject: result.emailData.subject,
+            pageUrl: result.page.url,
+            attachmentsSaved: 0
+          });
+          return CardService.newActionResponseBuilder()
+            .setNotification(
+              CardService.newNotification().setText('✅ Saved to Notion!')
+            )
+            .setNavigation(
+              CardService.newNavigation().pushCard(successCard)
+            )
+            .build();
+        }
+
+        configRepo.set({
+          pendingAttachmentEmail: {
+            messageId: messageId,
+            pageId: result.page.id,
+            pageUrl: result.page.url,
+            subject: result.emailData.subject,
+            savedAt: new Date().toISOString()
+          }
+        });
+
+        const attachmentMappingsCard = this._buildAttachmentMappingsCard(0);
+        return CardService.newActionResponseBuilder()
+          .setNotification(
+            CardService.newNotification().setText('✅ Email saved. Configure attachment mappings to finish.')
+          )
+          .setNavigation(
+            CardService.newNavigation().pushCard(attachmentMappingsCard)
+          )
+          .build();
+      }
+
+      const successCard = buildSuccessCard({
+        emailId: messageId,
+        subject: result.emailData.subject,
+        pageUrl: result.page.url,
+        attachmentsSaved: 0
+      });
       return CardService.newActionResponseBuilder()
-        .setNotification(CardService.newNotification().setText('✅ Saved to Notion!'))
-        .setNavigation(CardService.newNavigation().pushCard(successCard))
-        .build();
-    } else {
-      // Only show actual errors, not duplicate warnings
-      // (duplicates should be caught in preview, not here)
-      const errorMsg = result.errors?.[0]?.message || result.message || 'Unknown error';
-      return CardService.newActionResponseBuilder()
-        .setNotification(CardService.newNotification().setText(`❌ Save failed: ${errorMsg}`))
+        .setNotification(
+          CardService.newNotification().setText('✅ Saved to Notion!')
+        )
+        .setNavigation(
+          CardService.newNavigation().pushCard(successCard)
+        )
         .build();
     }
+
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText(`❌ Save failed: ${result.message || 'Unknown error'}`)
+      )
+      .build();
   } catch (error) {
     this._logger.error('Quick save fatal error', error);
     return CardService.newActionResponseBuilder()
@@ -91,6 +144,63 @@ saveEmail(messageId, skipDuplicateCheck = false) {
   const workflow = this._container.resolve('workflowExecutor');
   // Note: skipDuplicateCheck is not used here because duplicate check is in preview only
   return workflow.execute(messageId);
+}
+
+/**
+ * Save email without processing attachments
+ * @private
+ * @param {string} messageId
+ * @returns {{success: boolean, message?: string, page?: Object, emailData?: Object}}
+ */
+_saveEmailOnly(messageId) {
+  try {
+    this._logger.info('Saving email only', { messageId });
+    const emailService = this._container.resolve('emailService');
+    const pageService = this._container.resolve('pageService');
+
+    const emailData = emailService.extractById(messageId);
+    if (!emailData) {
+      return { success: false, message: 'Failed to extract email data' };
+    }
+
+    const page = pageService.createPageFromEmail(emailData);
+    if (!page || !page.id) {
+      return { success: false, message: 'Failed to create Notion page' };
+    }
+
+    return { success: true, page, emailData };
+  } catch (error) {
+    this._logger.error('Save email only failed', error);
+    return { success: false, message: error.message || 'Unknown error' };
+  }
+}
+
+/**
+ * Build attachment mappings card
+ * @private
+ * @param {number} page
+ * @returns {CardService.Card}
+ */
+_buildAttachmentMappingsCard(page = 0) {
+  const mappingCard = new MappingCard(
+    this._container.resolve('attachmentDatabaseService'),
+    this._container.resolve('attachmentMappingRepo'),
+    this._container.resolve('attachmentHandlerFactory'),
+    this._logger,
+    {
+      cardTitle: '📎 Map Attachments → Notion',
+      subtitlePrefix: 'Attachment DB',
+      configActionName: 'showAttachmentsConfiguration',
+      configActionLabel: '⚙️ Attachment Settings',
+      retryActionName: 'showAttachmentMappingsConfiguration',
+      saveNavigateActionName: 'saveAndNavigateAttachmentMappingsPage',
+      cancelActionName: 'cancelAttachmentMappingsConfiguration',
+      finishActionName: 'finishAttachmentMappingsConfiguration',
+      mappingScope: 'attachment'
+    }
+  );
+
+  return mappingCard.build(page);
 }
 
   /**
@@ -217,7 +327,7 @@ showMappings(page = 0) {
  * @returns {CardService.Card}
  */
 function buildHomepageCard() {
-  return app.showHomepage();
+  return app.showSettings();
 }
 
 /**

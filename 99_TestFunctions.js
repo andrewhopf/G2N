@@ -592,9 +592,9 @@ function showAttachmentsConfiguration(event) {
           .setOnClickAction(CardService.newAction()
             .setFunctionName('showG2NSettings')))
         .addButton(CardService.newTextButton()
-          .setText('🏠 Home')
+          .setText('⚙️ Settings')
           .setOnClickAction(CardService.newAction()
-            .setFunctionName('onG2NHomepage'))));
+            .setFunctionName('showG2NSettings'))));
     
     card.addSection(navSection);
     
@@ -624,9 +624,9 @@ function testAttachmentsConfig() {
             .setOnClickAction(CardService.newAction()
               .setFunctionName('showAttachmentsConfiguration')))
           .addButton(CardService.newTextButton()
-            .setText('🏠 Home')
+            .setText('⚙️ Settings')
             .setOnClickAction(CardService.newAction()
-              .setFunctionName('onG2NHomepage')))))
+              .setFunctionName('showG2NSettings')))))
       .build();
     
     return card;
