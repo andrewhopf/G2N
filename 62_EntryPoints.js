@@ -72,6 +72,10 @@ function onG2NHomepage(event) {
  */
 function onG2NGmailMessage(event) {
   try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
     return getApp().showEmailPreview(event);
   } catch (error) {
     console.error('Email preview error:', error);
@@ -86,6 +90,10 @@ function onG2NGmailMessage(event) {
  */
 function showEmailPreview(event) {
   try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
     return getApp().showEmailPreview(event);
   } catch (error) {
     console.error('Email preview error:', error);
@@ -100,6 +108,10 @@ function showEmailPreview(event) {
  */
 function showPreviewFromMenu(event) {
   try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
     return getApp().showEmailPreview(event);
   } catch (error) {
     console.error('Preview menu error:', error);
@@ -114,6 +126,10 @@ function showPreviewFromMenu(event) {
  */
 function showG2NSettings(event) {
   try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
     return getApp().showSettings(event);
   } catch (error) {
     console.error('Settings error:', error);
@@ -128,6 +144,10 @@ function showG2NSettings(event) {
  */
 function showAttachmentsConfiguration(event) {
   try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
     getApp(); // ensure bootstrap
     return buildAttachmentsCard();
   } catch (error) {
@@ -290,6 +310,10 @@ function ensureAttachmentField(event) {
  */
 function quickG2NSaveEmail(event) {
   try {
+    if (typeof getTrialGuardActionResponse_ === 'function') {
+      const guardResponse = getTrialGuardActionResponse_();
+      if (guardResponse) return guardResponse;
+    }
     return getApp().quickG2NSaveEmail(event);
   } catch (error) {
     console.error('Save email error:', error);

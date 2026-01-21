@@ -37,6 +37,10 @@ class EmailPreviewCard extends BaseCardRenderer {
 
             const header = this.buildHeader('📨 Save to Notion', 'Review before saving');
             let sections = [];
+            if (typeof getTrialNoticeSection_ === 'function') {
+                const trialSection = getTrialNoticeSection_();
+                if (trialSection) sections.push(trialSection);
+            }
 
             // ========== SECTION 0: DUPLICATE WARNING (AT TOP!) ==========
             try {

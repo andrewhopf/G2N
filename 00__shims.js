@@ -5,7 +5,9 @@ if (typeof BaseCardRenderer === 'undefined') {
     buildHeader(title = '', subtitle = '', imageUrl = '') {
       const h = CardService.newCardHeader().setTitle(String(title || ''));
       if (subtitle) h.setSubtitle(String(subtitle));
-      if (imageUrl) h.setImageUrl(String(imageUrl));
+      const defaultIcon = 'https://raw.githubusercontent.com/andrewhopf/g2n_app-icons/6d9c031b539022253505708f4b550665da35493a/MAKER_FINAL_96.png';
+      const iconUrl = imageUrl || defaultIcon;
+      if (iconUrl) h.setImageUrl(String(iconUrl));
       return h;
     }
     sectionWithHeader(title = '') { return CardService.newCardSection().setHeader(String(title || '')); }

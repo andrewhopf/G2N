@@ -63,6 +63,7 @@
 "60_Application.js",
 "61_Bootstrap.js",
 "62_EntryPoints.js",
+"99_TrialGuard.js",
 "99_TestFunctions.js",
 "appsscript.json"
   ],

@@ -15,7 +15,9 @@ class BaseCardRenderer {
   buildHeader(title = '', subtitle = '', imageUrl = '') {
     const header = CardService.newCardHeader().setTitle(String(title || ''));
     if (subtitle) header.setSubtitle(String(subtitle));
-    if (imageUrl) header.setImageUrl(String(imageUrl));
+    const defaultIcon = 'https://raw.githubusercontent.com/andrewhopf/g2n_app-icons/6d9c031b539022253505708f4b550665da35493a/MAKER_FINAL_96.png';
+    const iconUrl = imageUrl || defaultIcon;
+    if (iconUrl) header.setImageUrl(String(iconUrl));
     return header;
   }
 

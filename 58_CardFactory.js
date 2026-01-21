@@ -356,6 +356,29 @@ class CardFactory {
       card.addSection(attachmentsSection);
     }
 
+    const saveSection = CardService.newCardSection()
+      .setHeader('Save')
+      .addWidget(
+        CardService.newTextParagraph()
+          .setText('<b>Save settings</b> - persist API key and options')
+      )
+      .addWidget(
+        CardService.newButtonSet()
+          .addButton(
+            CardService.newTextButton()
+              .setText('💾 Save')
+              .setOnClickAction(
+                CardService.newAction()
+                  .setFunctionName('saveConfiguration')
+              )
+              .setTextButtonStyle(
+                recentlySaved ? CardService.TextButtonStyle.FILLED : CardService.TextButtonStyle.TEXT
+              )
+              .setBackgroundColor(recentlySaved ? '#0F9D58' : null)
+          )
+      );
+    card.addSection(saveSection);
+
     // Actions
     let reauthUrl = '';
     try {
@@ -370,31 +393,11 @@ class CardFactory {
         .setHeader('Actions')
         .addWidget(
           CardService.newTextParagraph()
-            .setText('<b>Save settings</b> - persist API key and options')
-        )
-        .addWidget(
-          CardService.newTextParagraph()
             .setText('<b>Reauthorize</b> - refresh Drive permissions')
         )
         .addWidget(
           CardService.newTextParagraph()
             .setText('<b>Test</b> - verify Notion connection')
-        )
-        .addWidget(CardService.newDivider())
-        .addWidget(
-          CardService.newButtonSet()
-            .addButton(
-              CardService.newTextButton()
-                .setText('💾 Save')
-                .setOnClickAction(
-                  CardService.newAction()
-                    .setFunctionName('saveConfiguration')
-                )
-                .setTextButtonStyle(
-                  recentlySaved ? CardService.TextButtonStyle.FILLED : CardService.TextButtonStyle.TEXT
-                )
-                .setBackgroundColor(recentlySaved ? '#0F9D58' : null)
-            )
         )
         .addWidget(CardService.newDivider())
         .addWidget(

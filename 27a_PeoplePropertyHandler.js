@@ -39,12 +39,6 @@ class PeoplePropertyHandler extends BasePropertyHandler {
       widgets.push(this._createRequiredIndicator());
     }
 
-    // Enable checkbox
-    const isEnabled = currentConfig.enabled === true || currentConfig.enabled === 'true';
-    widgets.push(
-      this._createEnableCheckbox(`enabled_${propId}`, isEnabled, 'Assign people')
-    );
-
     // Try to get workspace users
     let users = [];
     try {
@@ -98,8 +92,6 @@ class PeoplePropertyHandler extends BasePropertyHandler {
    */
   processConfiguration(property, formInput) {
     const propId = property.id;
-    const isEnabled = this._isEnabled(formInput, `enabled_${propId}`);
-
     // Get selected user IDs
     let selectedUserIds = [];
     const formValue = formInput[`people_${propId}`];
@@ -112,7 +104,7 @@ class PeoplePropertyHandler extends BasePropertyHandler {
     return {
       type: 'people',
       notionPropertyName: property.name,
-      enabled: isEnabled && selectedUserIds.length > 0,
+      enabled: selectedUserIds.length > 0,
       selectedUserIds: selectedUserIds,
       isStaticOption: true,
       isRequired: property.isRequired || false

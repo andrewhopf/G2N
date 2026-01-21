@@ -45,7 +45,12 @@ class SettingsCard extends BaseCardRenderer {
         );
 
       // Start building sections array
-      const sections = [apiSection, dbSection];
+      const sections = [];
+      if (typeof getTrialNoticeSection_ === 'function') {
+        const trialSection = getTrialNoticeSection_();
+        if (trialSection) sections.push(trialSection);
+      }
+      sections.push(apiSection, dbSection);
 
       // === SECTION 3: Mappings (if DB selected) ===
       if (status.hasDatabaseId) {

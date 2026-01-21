@@ -30,7 +30,7 @@
   "addOns": {
     "common": {
       "name": "Gmail to Notion",
-      "logoUrl": "https://www.gstatic.com/images/icons/material/system/1x/bookmark_white_24dp.png",
+      "logoUrl": "https://raw.githubusercontent.com/andrewhopf/g2n_app-icons/6d9c031b539022253505708f4b550665da35493a/MAKER_FINAL_128.png",
       "homepageTrigger": {
         "runFunction": "showG2NSettings",
         "enabled": true
