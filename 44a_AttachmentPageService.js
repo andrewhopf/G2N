@@ -56,25 +56,33 @@ class AttachmentPageService {
       return { created: 0, skipped: emailData.attachmentCount || 0, pages: [] };
     }
 
-    const filesProperties = Array.isArray(schema.properties)
-      ? schema.properties.filter(p => p.type === 'files')
+    const propertyType = config.filesPropertyType === 'url' ? 'url' : 'files';
+    const hashPropertyName = config.attachmentHashPropertyName || 'G2N Attachment Hash';
+    const availableProps = Array.isArray(schema.properties)
+      ? schema.properties.filter(p => p.type === propertyType)
       : [];
-    let filesPropertyName = filesProperties.length > 0
-      ? filesProperties[0].name
+    let filesPropertyName = availableProps.length > 0
+      ? availableProps[0].name
       : (config.filesPropertyName || 'Attachments');
-    if (filesProperties.length === 0) {
+
+    if (availableProps.length === 0) {
       try {
-        this._logger.info('Creating Files property for attachments', { name: filesPropertyName });
-        this._notion.ensureFilesProperty(config.attachmentDatabaseId, filesPropertyName, config.apiKey);
+        this._logger.info('Creating attachment property', { name: filesPropertyName, type: propertyType });
+        if (propertyType === 'url') {
+          this._notion.ensureUrlProperty(config.attachmentDatabaseId, filesPropertyName, config.apiKey);
+        } else {
+          this._notion.ensureFilesProperty(config.attachmentDatabaseId, filesPropertyName, config.apiKey);
+        }
+        this._notion.ensureRichTextProperty(config.attachmentDatabaseId, hashPropertyName, config.apiKey);
         schema = this._database.getCurrentSchema() || schema;
-        const refreshedFiles = Array.isArray(schema.properties)
-          ? schema.properties.filter(p => p.type === 'files')
+        const refreshed = Array.isArray(schema.properties)
+          ? schema.properties.filter(p => p.type === propertyType)
           : [];
-        if (refreshedFiles.length > 0) {
-          filesPropertyName = refreshedFiles[0].name;
+        if (refreshed.length > 0) {
+          filesPropertyName = refreshed[0].name;
         }
       } catch (error) {
-        this._logger.warn('Failed to create Files property for attachments', { error: error.message });
+        this._logger.warn('Failed to create attachment property', { error: error.message });
       }
     }
 
@@ -167,16 +175,24 @@ class AttachmentPageService {
           attachment.getSize()
         );
         const filesUrl = (match && (match.downloadUrl || match.url)) || '';
+        const hashValue = this._buildAttachmentHash_(attachment);
         if (filesUrl) {
-          properties[filesPropertyName] = {
-            files: [
-              {
-                name: match.sourceName || match.name || attachment.getName(),
-                type: 'external',
-                external: { url: filesUrl }
-              }
-            ]
-          };
+          if (propertyType === 'url') {
+            properties[filesPropertyName] = { url: filesUrl };
+          } else {
+            properties[filesPropertyName] = {
+              files: [
+                {
+                  name: match.sourceName || match.name || attachment.getName(),
+                  type: 'external',
+                  external: { url: filesUrl }
+                }
+              ]
+            };
+          }
+        }
+        if (hashValue) {
+          properties[hashPropertyName] = { rich_text: [{ text: { content: hashValue } }] };
         }
 
         this._logger.debug('Attachment page properties', {
@@ -233,6 +249,25 @@ class AttachmentPageService {
       skipped: result.skipped
     });
     return result;
+  }
+
+  /**
+   * Build a stable hash for attachment duplicate checks (name + size).
+   * @private
+   * @param {Blob} attachment
+   * @returns {string}
+   */
+  _buildAttachmentHash_(attachment) {
+    try {
+      const name = attachment && attachment.getName ? attachment.getName() : '';
+      const size = attachment && attachment.getSize ? attachment.getSize() : 0;
+      const raw = `${name}|${size}`;
+      const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+      return Utilities.base64EncodeWebSafe(bytes);
+    } catch (e) {
+      this._logger.warn('Failed to build attachment hash', { error: e.message });
+      return '';
+    }
   }
 
   /**

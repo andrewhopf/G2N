@@ -120,7 +120,9 @@ if (type === 'people' && !this._handlers.has('people')) {
       const container = this._getContainer();
       if (container) {
         const notionAdapter = container.resolve('notionAdapter');
-        this._handlers.set('relation', new RelationPropertyHandler(notionAdapter));
+        const configRepo = container.resolve('configRepo');
+        const logger = container.resolve('logger');
+        this._handlers.set('relation', new RelationPropertyHandler(notionAdapter, configRepo, logger));
         console.log('✅ RelationPropertyHandler lazily registered');
       }
     } catch (e) {

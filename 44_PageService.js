@@ -124,6 +124,40 @@ class PageService {
       }
     }
 
+    // AUTO-ADD G2N Message ID property (SYNC)
+    if (emailData.messageId) {
+      const messageIdPropertyName = this._ensureMessageIdProperty(databaseId, apiKey);
+      if (messageIdPropertyName && typeof messageIdPropertyName === 'string') {
+        try {
+          const dbSchema = this.notionService.adapter.getDatabase(databaseId, apiKey);
+          const propNames = (dbSchema.properties || []).map(p => p.name);
+          const allowedNames = new Set(propNames);
+
+          if (allowedNames.has(messageIdPropertyName)) {
+            properties[messageIdPropertyName] = {
+              rich_text: [{ text: { content: String(emailData.messageId) } }]
+            };
+            this.logger.info('Auto-added G2N Message ID property', {
+              propertyName: messageIdPropertyName,
+              messageId: String(emailData.messageId).substring(0, 12) + '...'
+            });
+          } else {
+            this.logger.warn('G2N Message ID property not present in schema yet; skipping add', {
+              messageIdPropertyName,
+              availableProperties: propNames
+            });
+          }
+        } catch (error) {
+          this.logger.warn('Failed to verify G2N Message ID property existence', error.message);
+          properties[messageIdPropertyName] = {
+            rich_text: [{ text: { content: String(emailData.messageId) } }]
+          };
+        }
+      } else {
+        this.logger.warn('G2N Message ID property name invalid', { messageIdPropertyName });
+      }
+    }
+
     // Ensure a title exists
     if (!Object.values(properties).some(p => p && p.title)) {
       const schema = this.notionService.adapter.getDatabase(databaseId, apiKey);
@@ -293,6 +327,37 @@ class PageService {
       return null;
     } catch (error) {
       this.logger.warn('Failed to ensure Gmail Link property', error && error.message ? error.message : error);
+      return null;
+    }
+  }
+
+  /**
+   * Ensure the Notion database has a G2N Message ID rich_text property (SYNC)
+   * @param {string} databaseId
+   * @param {string} apiKey
+   * @returns {string|null}
+   */
+  _ensureMessageIdProperty(databaseId, apiKey) {
+    try {
+      const dbSchema = this.notionService.adapter.getDatabase(databaseId, apiKey);
+      const propsArray = dbSchema.properties || [];
+      const exact = propsArray.find(p => p.name === 'G2N Message ID' && p.type === 'rich_text');
+      if (exact) {
+        this.logger.info('G2N Message ID property found', { propertyName: 'G2N Message ID' });
+        return 'G2N Message ID';
+      }
+
+      this.logger.info('Creating G2N Message ID property');
+      const updatedDb = this.notionService.adapter.ensureRichTextProperty(databaseId, 'G2N Message ID', apiKey);
+      if (updatedDb && updatedDb.properties && updatedDb.properties['G2N Message ID']) {
+        this.logger.info('Created "G2N Message ID" property successfully');
+        return 'G2N Message ID';
+      }
+
+      this.logger.warn('Failed to create "G2N Message ID" property');
+      return null;
+    } catch (error) {
+      this.logger.warn('Failed to ensure G2N Message ID property', error && error.message ? error.message : error);
       return null;
     }
   }

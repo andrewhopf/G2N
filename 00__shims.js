@@ -1,4 +1,5 @@
 // 00_Shims.js - Minimal BaseCardRenderer shim to guarantee availability
+//HEAD DEPLOYMENT ttt
 if (typeof BaseCardRenderer === 'undefined') {
   class BaseCardRenderer {
     constructor(container, logger) { this.container = container || null; this.logger = logger || console; }

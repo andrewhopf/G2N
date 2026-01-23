@@ -296,6 +296,71 @@ queryDatabase(databaseId, queryPayload = {}, apiKey) {
   }
 }
 
+/**
+ * Query a Notion database and return pagination metadata.
+ * @param {string} databaseId - Notion database ID
+ * @param {Object} [queryPayload={}] - Query parameters
+ * @param {string} apiKey - Notion API key
+ * @returns {{results: Array<Object>, has_more: boolean, next_cursor: string|null}}
+ */
+queryDatabaseWithMeta(databaseId, queryPayload = {}, apiKey) {
+  try {
+    this._logger.info('queryDatabaseWithMeta received', {
+      hasFilter: !!queryPayload.filter,
+      filterKeys: queryPayload.filter ? Object.keys(queryPayload.filter) : [],
+      filterJson: queryPayload.filter ? JSON.stringify(queryPayload.filter) : '{}'
+    });
+
+    const cleanId = this._normalizeId(databaseId);
+
+    const requestBody = {
+      page_size: queryPayload.page_size || 10
+    };
+
+    if (queryPayload.filter) {
+      requestBody.filter = JSON.parse(JSON.stringify(queryPayload.filter));
+      this._logger.info('Filter added to request', {
+        filterJson: JSON.stringify(requestBody.filter)
+      });
+    }
+
+    if (queryPayload.sorts) {
+      requestBody.sorts = JSON.parse(JSON.stringify(queryPayload.sorts));
+    }
+
+    if (queryPayload.start_cursor) {
+      requestBody.start_cursor = queryPayload.start_cursor;
+    }
+
+    this._logger.info('Sending to Notion API', {
+      endpoint: `/databases/${cleanId}/query`,
+      payload: JSON.stringify(requestBody)
+    });
+
+    const response = this.request(`/databases/${cleanId}/query`, 'POST', requestBody, apiKey);
+    const results = response.results || [];
+
+    this._logger.info('Query results received', {
+      count: results.length,
+      hasFilter: !!requestBody.filter,
+      hasMore: !!response.has_more
+    });
+
+    return {
+      results: results,
+      has_more: !!response.has_more,
+      next_cursor: response.next_cursor || null
+    };
+  } catch (error) {
+    const errorMessage = error ? (error.message || JSON.stringify(error)) : 'Unknown error';
+    this._logger.error('Database query failed', {
+      error: errorMessage,
+      databaseId
+    });
+    throw error;
+  }
+}
+
     /**
      * Validates or creates the URL property for duplicate checking
      * @param {string} databaseId - Database ID
@@ -389,6 +454,32 @@ queryDatabase(databaseId, queryPayload = {}, apiKey) {
         return result;
       } catch (error) {
         this._logger.error('Failed to create URL property', error && error.message ? error.message : error);
+        return null;
+      }
+    }
+
+    /**
+     * Create or update rich_text property in database schema
+     * @param {string} databaseId - Database ID
+     * @param {string} propertyName - Property name
+     * @param {string} apiKey - Notion API key
+     * @returns {Object|null} Updated database
+     */
+    ensureRichTextProperty(databaseId, propertyName, apiKey) {
+      const cleanId = this._normalizeId(databaseId);
+      const payload = {
+        properties: {
+          [propertyName]: { rich_text: {} }
+        }
+      };
+
+      try {
+        this._logger.debug('Adding rich_text property via PATCH', { propertyName });
+        const result = this.request(`/databases/${cleanId}`, 'PATCH', payload, apiKey);
+        this._logger.info('rich_text property created', { propertyName });
+        return result;
+      } catch (error) {
+        this._logger.error('Failed to create rich_text property', error && error.message ? error.message : error);
         return null;
       }
     }

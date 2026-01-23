@@ -30,7 +30,28 @@ function showAttachmentsConfiguration(event) {
         'Could not list databases. Check API key and permissions.');
     }
     
-    const currentDbId = config.attachmentDatabaseId || config.databaseId || '';
+    const attachmentDbId = config.attachmentDatabaseId || '';
+    const emailDbId = config.databaseId || '';
+    const propertyDbId = config.attachmentUseSeparateDatabase ? attachmentDbId : emailDbId;
+    const useUrlProperty = config.filesPropertyType === 'url';
+    const propertyType = useUrlProperty ? 'url' : 'files';
+    let hasProperty = false;
+    let availablePropertyNames = [];
+    let hasHashProperty = false;
+    const hashPropertyName = config.attachmentHashPropertyName || 'G2N Attachment Hash';
+    if (propertyDbId && config.apiKey) {
+      try {
+        const dbSchema = notionService.adapter.getDatabase(propertyDbId, config.apiKey);
+        availablePropertyNames = (dbSchema.properties || [])
+          .filter(p => p.type === propertyType)
+          .map(p => p.name);
+        hasProperty = availablePropertyNames.length > 0;
+        hasHashProperty = (dbSchema.properties || [])
+          .some(p => p.type === 'rich_text' && p.name === hashPropertyName);
+      } catch (e) {
+        logger.warn('Could not load attachment properties', e);
+      }
+    }
     
     // Build the card
     const header = CardService.newCardHeader()
@@ -40,35 +61,63 @@ function showAttachmentsConfiguration(event) {
     const card = CardService.newCardBuilder()
       .setHeader(header);
     
-    // === SECTION 1: Database Selection ===
+    // === SECTION 1: Database (configured in Settings) ===
     const dbSection = CardService.newCardSection()
-      .setHeader('🗄️ Select Attachment Database');
-    
-    if (databases.length === 0) {
+      .setHeader('🗄️ Attachment Database');
+    if (attachmentDbId) {
       dbSection.addWidget(CardService.newTextParagraph()
-        .setText('No Notion databases found.'));
+        .setText(`Current: <b>${config.attachmentDatabaseName || 'Selected'}</b>`));
     } else {
-      const selection = CardService.newSelectionInput()
-        .setType(CardService.SelectionInputType.DROPDOWN)
-        .setFieldName('attachment_database_id') // Consistent field name
-        .setTitle('Choose Database');
-      
-      selection.addItem('-- Select database --', '', currentDbId === '');
-      databases.forEach(db => {
-        selection.addItem(db.name, db.id, db.id === currentDbId);
-      });
-      
-      dbSection.addWidget(selection);
+      dbSection.addWidget(CardService.newTextParagraph()
+        .setText('<i>Select the attachment database in Settings.</i>'));
     }
-    
     card.addSection(dbSection);
     
-    // === SECTION 2: Files Property Configuration ===
+    // === SECTION 2: Attachment Link To Notion ===
     const filesSection = CardService.newCardSection()
-      .setHeader('📁 Files Property');
+      .setHeader('📁 Attachment Link To Notion');
 
-    filesSection.addWidget(CardService.newTextParagraph()
-      .setText('<i>Files will be saved to a Files property named "Attachments". If it does not exist, it will be created.</i>'));
+    const linkType = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('files_property_use_url');
+    linkType.addItem('Use URL links instead of Notion files', 'true', useUrlProperty);
+    filesSection.addWidget(linkType);
+    filesSection.addWidget(
+      CardService.newTextParagraph()
+        .setText('<font color="#5F6368"><i>We store an attachment hash to speed up duplicate checks. If missing, it will be created automatically.</i></font>')
+    );
+
+    if (!propertyDbId) {
+      filesSection.addWidget(CardService.newTextParagraph()
+        .setText('<i>Select a database first to configure the attachment link field.</i>'));
+    } else {
+      const propertyChoice = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.DROPDOWN)
+        .setFieldName('files_property_choice')
+        .setTitle(useUrlProperty ? 'Choose URL property' : 'Choose Files property');
+
+      if (availablePropertyNames.length === 0) {
+        propertyChoice.addItem('Create new property', '__create__', true);
+      } else {
+        const currentName = config.filesPropertyName || 'Attachments';
+        let matched = false;
+        availablePropertyNames.forEach(name => {
+          const isSelected = name === currentName;
+          if (isSelected) matched = true;
+          propertyChoice.addItem(name, name, isSelected);
+        });
+        propertyChoice.addItem('Create new property', '__create__', !matched);
+      }
+
+      filesSection.addWidget(propertyChoice);
+      filesSection.addWidget(
+        CardService.newTextInput()
+          .setFieldName('files_property_new_name')
+          .setTitle('New property name')
+          .setValue(config.filesPropertyName || 'Attachments')
+          .setHint('Used only when "Create new property" is selected')
+      );
+    }
 
     card.addSection(filesSection);
     
@@ -79,34 +128,30 @@ function showAttachmentsConfiguration(event) {
     const embedEmail = CardService.newSelectionInput()
       .setType(CardService.SelectionInputType.CHECK_BOX)
       .setFieldName('embed_email_page')
-      .addItem('Add attachments to email page body', 'yes', config.attachmentEmbedEmailPage === true);
+      .addItem('Email to Notion Page', 'yes', config.attachmentEmbedEmailPage === true);
 
     const embedAttachment = CardService.newSelectionInput()
       .setType(CardService.SelectionInputType.CHECK_BOX)
       .setFieldName('embed_attachment_page')
-      .addItem('Add attachments to attachment pages', 'yes', config.attachmentEmbedAttachmentPage === true);
+      .addItem('Attachment Link To Notion', 'yes', config.attachmentEmbedAttachmentPage === true);
 
     embedSection.addWidget(embedEmail);
     embedSection.addWidget(embedAttachment);
     card.addSection(embedSection);
     
     // === SECTION 5: Actions ===
+    const actionButtons = CardService.newButtonSet();
+    actionButtons.addButton(CardService.newTextButton()
+      .setText('💾 Save Settings')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('saveAttachmentSettings')));
+    actionButtons.addButton(CardService.newTextButton()
+      .setText('📎 Attachment Mappings')
+      .setOnClickAction(CardService.newAction()
+        .setFunctionName('showAttachmentMappingsConfiguration')));
+    
     const actionSection = CardService.newCardSection()
-      .addWidget(CardService.newButtonSet()
-        .addButton(CardService.newTextButton()
-          .setText('✅ Ensure Files Property')
-          .setBackgroundColor('#0F9D58')
-          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName('ensureAttachmentField')))
-        .addButton(CardService.newTextButton()
-          .setText('💾 Save Settings')
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName('saveAttachmentSettings')))
-        .addButton(CardService.newTextButton()
-          .setText('📎 Attachment Mappings')
-          .setOnClickAction(CardService.newAction()
-            .setFunctionName('showAttachmentMappingsConfiguration'))));
+      .addWidget(actionButtons);
     
     card.addSection(actionSection);
     
@@ -160,8 +205,23 @@ function buildAttachmentsCard() {
     }
     
     // Current attachment database ID (separate or fallback to main)
-    const currentAttachmentDbId = config.attachmentDatabaseId || config.databaseId || '';
+    const currentAttachmentDbId = config.attachmentDatabaseId || '';
     const currentAttachmentDbName = config.attachmentDatabaseName || config.databaseName || '';
+    const emailDbId = config.databaseId || '';
+    const propertyDbId = config.attachmentUseSeparateDatabase ? currentAttachmentDbId : emailDbId;
+    const useUrlProperty = config.filesPropertyType === 'url';
+    const propertyType = useUrlProperty ? 'url' : 'files';
+    let availablePropertyNames = [];
+    if (propertyDbId && config.apiKey) {
+      try {
+        const dbSchema = notionService.adapter.getDatabase(propertyDbId, config.apiKey);
+        availablePropertyNames = (dbSchema.properties || [])
+          .filter(p => p.type === propertyType)
+          .map(p => p.name);
+      } catch (e) {
+        logger.warn('Could not load attachment properties', e);
+      }
+    }
     
     // Build the card
     const header = CardService.newCardHeader()
@@ -175,14 +235,15 @@ function buildAttachmentsCard() {
     const statusSection = CardService.newCardSection()
       .setHeader('📊 Current Status');
     
-    if (currentAttachmentDbId && currentAttachmentDbName) {
-      // Check if database has files property
+    if (propertyDbId && currentAttachmentDbName) {
+      // Check if database has selected property type
       let hasFilesProperty = false;
+      const propType = config.filesPropertyType === 'url' ? 'url' : 'files';
       try {
-        const dbSchema = notionService.adapter.getDatabase(currentAttachmentDbId, config.apiKey);
-        hasFilesProperty = dbSchema.properties?.some(p => p.type === 'files') || false;
+        const dbSchema = notionService.adapter.getDatabase(propertyDbId, config.apiKey);
+        hasFilesProperty = dbSchema.properties?.some(p => p.type === propType) || false;
       } catch (e) {
-        logger.warn('Could not check files property', e);
+        logger.warn('Could not check attachment property', e);
       }
       
       statusSection.addWidget(CardService.newKeyValue()
@@ -190,8 +251,12 @@ function buildAttachmentsCard() {
         .setContent(currentAttachmentDbName));
       
       statusSection.addWidget(CardService.newKeyValue()
-        .setTopLabel('Files Property')
+        .setTopLabel(propType === 'url' ? 'URL Property' : 'Files Property')
         .setContent(hasFilesProperty ? '✅ Configured' : '❌ Not found'));
+
+      statusSection.addWidget(CardService.newKeyValue()
+        .setTopLabel('Attachment Hash')
+        .setContent(hasHashProperty ? '✅ Configured' : '⚠️ Will be created on save'));
       
     } else {
       statusSection.addWidget(CardService.newTextParagraph()
@@ -208,48 +273,59 @@ function buildAttachmentsCard() {
       card.addSection(mappingSummarySection);
     }
     
-    // === SECTION 2: Database Selection ===
+    // === SECTION 2: Database (configured in Settings) ===
     const dbSection = CardService.newCardSection()
-      .setHeader('🗄️ Select Attachment Database');
-    
-    if (databases.length === 0) {
+      .setHeader('🗄️ Attachment Database');
+    if (currentAttachmentDbId) {
+      const name = currentAttachmentDbName || 'Selected';
       dbSection.addWidget(CardService.newTextParagraph()
-        .setText('No databases found. Make sure your Notion integration has access to databases.'));
+        .setText(`Current: <b>${name}</b>`));
     } else {
-      const dbSelection = CardService.newSelectionInput()
-        .setType(CardService.SelectionInputType.DROPDOWN)
-        .setFieldName('attachment_database_id')
-        .setTitle('Choose Database');
-      
-      // Add default option
-      dbSelection.addItem('-- Select database --', '', currentAttachmentDbId === '');
-      
-      // Add all databases
-      databases.forEach(db => {
-        const isSelected = db.id === currentAttachmentDbId;
-        const displayName = db.id === config.databaseId ? `${db.name} (Email Database)` : db.name;
-        dbSelection.addItem(displayName, db.id, isSelected);
-      });
-      
-      dbSection.addWidget(dbSelection);
-      
-      // Note
       dbSection.addWidget(CardService.newTextParagraph()
-        .setText('<font color="#5F6368"><i>You can use the same database as emails or a dedicated attachments database.</i></font>'));
+        .setText('<i>Select the attachment database in Settings.</i>'));
     }
-    
     card.addSection(dbSection);
     
-    // === SECTION 3: Files Property ===
+    // === SECTION 3: Attachment Link To Notion ===
     const filesSection = CardService.newCardSection()
-      .setHeader('📁 Files Property');
+      .setHeader('📁 Attachment Link To Notion');
 
-    if (currentAttachmentDbId) {
-      filesSection.addWidget(CardService.newTextParagraph()
-        .setText('<i>Files will be saved to a Files property named "Attachments". If it does not exist, it will be created.</i>'));
+    const linkType = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.CHECK_BOX)
+      .setFieldName('files_property_use_url')
+      .addItem('Use URL links instead of Notion files', 'true', useUrlProperty);
+    filesSection.addWidget(linkType);
+
+    if (propertyDbId) {
+      const propertyChoice = CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.DROPDOWN)
+        .setFieldName('files_property_choice')
+        .setTitle(useUrlProperty ? 'Choose URL property' : 'Choose Files property');
+      
+      if (availablePropertyNames.length === 0) {
+        propertyChoice.addItem('Create new property', '__create__', true);
+      } else {
+        const currentName = config.filesPropertyName || 'Attachments';
+        let matched = false;
+        availablePropertyNames.forEach(name => {
+          const isSelected = name === currentName;
+          if (isSelected) matched = true;
+          propertyChoice.addItem(name, name, isSelected);
+        });
+        propertyChoice.addItem('Create new property', '__create__', !matched);
+      }
+
+      filesSection.addWidget(propertyChoice);
+      filesSection.addWidget(
+        CardService.newTextInput()
+          .setFieldName('files_property_new_name')
+          .setTitle('New property name')
+          .setValue(config.filesPropertyName || 'Attachments')
+          .setHint('Used only when "Create new property" is selected')
+      );
     } else {
       filesSection.addWidget(CardService.newTextParagraph()
-        .setText('<i>Select a database first to save attachments.</i>'));
+        .setText('<i>Select a database first to configure the attachment link field.</i>'));
     }
     
     card.addSection(filesSection);
@@ -479,16 +555,28 @@ function _formatMappingSourceLabel(fieldValue, registry, isAttachmentField) {
 function ensureAttachmentField(event) {
   try {
     const formInput = event?.formInput || {};
-    const selectedDb = formInput.selected_database_for_attachments || 
-                      formInput.attachment_database_id;
+    let selectedDb = formInput.selected_database_for_attachments || 
+                      formInput.attachment_database_id ||
+                      event?.parameters?.selectedDb;
     const propertyName = (formInput.files_property_name || 
                          formInput.attachment_property_name || 
+                         event?.parameters?.propertyName ||
                          'Attachments').trim();
+
+    if (!selectedDb) {
+      try {
+        const configRepo = container.resolve('configRepo');
+        const config = configRepo.getAll();
+        selectedDb = config.attachmentDatabaseId || config.databaseId || '';
+      } catch (e) {
+        // ignore fallback failures
+      }
+    }
     
     if (!selectedDb) {
       return CardService.newActionResponseBuilder()
         .setNotification(CardService.newNotification()
-          .setText('⚠️ No database selected'))
+          .setText('⚠️ Please select a database (or save it in settings first)'))
         .build();
     }
     
@@ -533,14 +621,28 @@ function ensureAttachmentField(event) {
      * @param {Object} event - GAS event with form input
      * @returns {CardService.ActionResponse}
      */
-    function saveAttachmentSettings(event) {
-    try {
+function saveAttachmentSettings(event) {
+  try {
         const formInput = event.formInput || {};
         const attachmentDbId = formInput.attachment_database_id || 
                             formInput.selected_database_for_attachments;
         const fileHandling = 'upload_to_drive';
-        const filesPropertyName = 'Attachments';
+        const app = getApp();
+        const container = app.getContainer();
+        const configRepo = container.resolve('configRepo');
+        const notionService = container.resolve('notionService');
+        const attachmentDatabaseService = container.resolve('attachmentDatabaseService');
+        const logger = container.resolve('logger');
+
         const existingConfig = configRepo.getAll();
+        const useUrlInput = formInput.files_property_use_url;
+        const useUrlProperty = useUrlInput === undefined
+          ? (existingConfig.filesPropertyType === 'url')
+          : (Array.isArray(useUrlInput)
+            ? useUrlInput.includes('true')
+            : useUrlInput === 'true');
+        const propertyChoice = formInput.files_property_choice || '';
+        const propertyNewName = (formInput.files_property_new_name || '').trim();
         const embedEmailInput = formInput.embed_email_page;
         const embedAttachmentInput = formInput.embed_attachment_page;
         const embedEmailPage = embedEmailInput === undefined
@@ -553,20 +655,13 @@ function ensureAttachmentField(event) {
           : (Array.isArray(embedAttachmentInput)
             ? embedAttachmentInput.includes('yes')
             : embedAttachmentInput === 'yes');
-        
+
         if (!attachmentDbId) {
         return CardService.newActionResponseBuilder()
             .setNotification(CardService.newNotification()
             .setText('⚠️ Please select an attachments database'))
             .build();
         }
-        
-        const app = getApp();
-        const container = app.getContainer();
-        const configRepo = container.resolve('configRepo');
-        const notionService = container.resolve('notionService');
-        const attachmentDatabaseService = container.resolve('attachmentDatabaseService');
-        const logger = container.resolve('logger');
         
         // Get database name (and initialize attachment mappings)
         let attachmentDbName = 'Unknown Database';
@@ -589,16 +684,35 @@ function ensureAttachmentField(event) {
         }
         
         // Save to configuration
+        let filesPropertyName = propertyChoice === '__create__'
+          ? (propertyNewName || 'Attachments')
+          : (propertyChoice || existingConfig.filesPropertyName || 'Attachments');
+
+        if (attachmentDbId) {
+          try {
+            if (useUrlProperty) {
+              notionService.adapter.ensureUrlProperty(attachmentDbId, filesPropertyName, existingConfig.apiKey);
+            } else {
+              notionService.adapter.ensureFilesProperty(attachmentDbId, filesPropertyName, existingConfig.apiKey);
+            }
+            const hashPropertyName = existingConfig.attachmentHashPropertyName || 'G2N Attachment Hash';
+            notionService.adapter.ensureRichTextProperty(attachmentDbId, hashPropertyName, existingConfig.apiKey);
+          } catch (e) {
+            logger.warn('Failed to ensure attachment property', e.message);
+          }
+        }
+
         const configData = {
         attachmentDatabaseId: attachmentDbId,
         attachmentDatabaseName: attachmentDbName,
         fileHandling: fileHandling,
         attachmentUseSeparateDatabase: true,
         attachmentEmbedEmailPage: embedEmailPage,
-        attachmentEmbedAttachmentPage: embedAttachmentPage
+        attachmentEmbedAttachmentPage: embedAttachmentPage,
+        filesPropertyName: filesPropertyName,
+        filesPropertyType: useUrlProperty ? 'url' : 'files',
+        attachmentHashPropertyName: existingConfig.attachmentHashPropertyName || 'G2N Attachment Hash'
         };
-        
-        configData.filesPropertyName = filesPropertyName;
         
         configRepo.set(configData);
         

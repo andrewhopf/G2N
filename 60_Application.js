@@ -196,7 +196,10 @@ _saveEmailOnly(messageId) {
  * @param {number} page
  * @returns {CardService.Card}
  */
-_buildAttachmentMappingsCard(page = 0) {
+_buildAttachmentMappingsCard() {
+  if (typeof buildAttachmentMappingsListCard === 'function') {
+    return buildAttachmentMappingsListCard();
+  }
   const mappingCard = new MappingCard(
     this._container.resolve('attachmentDatabaseService'),
     this._container.resolve('attachmentMappingRepo'),
@@ -215,7 +218,7 @@ _buildAttachmentMappingsCard(page = 0) {
     }
   );
 
-  return mappingCard.build(page);
+  return mappingCard.build(0);
 }
 
   /**
@@ -233,18 +236,45 @@ _buildAttachmentMappingsCard(page = 0) {
  * @param {Object} event - GAS event with gmail data
  * @returns {CardService.Card}
  */
-showEmailPreview(event) {
-  this._logger.debug('Showing email preview', { messageId: event?.gmail?.messageId });
-  
-  // ✅ Use the NEW EmailPreviewCard that has duplicate detection
-  try {
-    const emailPreviewCard = new EmailPreviewCard(this._container);
-    return emailPreviewCard.build(event);
-  } catch (error) {
-    this._logger.error('EmailPreviewCard build failed', error);
-    return buildErrorCard('Preview Error', error.message);
+  showEmailPreview(event) {
+    this._logger.debug('Showing email preview', { messageId: event?.gmail?.messageId });
+
+    const config = this._container.resolve('configRepo').getAll();
+    if (!config.apiKey) {
+      this._logger.info('Missing API key; routing to settings');
+      return this._cardFactory.createSettings();
+    }
+
+    // ✅ Use the NEW EmailPreviewCard that has duplicate detection
+    try {
+      const emailPreviewCard = new EmailPreviewCard(this._container);
+      return emailPreviewCard.build(event);
+    } catch (error) {
+      this._logger.error('EmailPreviewCard build failed', error);
+      return buildErrorCard('Preview Error', error.message);
+    }
   }
-}
+
+  /**
+   * Show save-to-Notion card
+   * @param {Object} event - GAS event with gmail data
+   * @returns {CardService.Card}
+   */
+  showSaveToNotion(event) {
+    this._logger.debug('Showing save-to-Notion', { messageId: event?.gmail?.messageId });
+    const config = this._container.resolve('configRepo').getAll();
+    if (!config.apiKey) {
+      this._logger.info('Missing API key; routing to settings');
+      return this._cardFactory.createSettings();
+    }
+    try {
+      const saveCard = new SaveToNotionCard(this._container);
+      return saveCard.build(event);
+    } catch (error) {
+      this._logger.error('Save-to-Notion build failed', error);
+      return buildErrorCard('Save to Notion Error', error.message);
+    }
+  }
 
   /**
    * Show settings
@@ -265,31 +295,31 @@ showEmailPreview(event) {
     return this._cardFactory.createDatabaseSelection();
   }
 
-/**
- * Show mappings configuration
- * Directly builds the MappingCard to avoid circular dependency with global buildMappingsCard().
- * 
- * @param {number} [page=0] - Page number (0-indexed)
- * @returns {CardService.Card} Mappings configuration card
- */
-showMappings(page = 0) {
-  this._logger.debug('Showing mappings', { page });
-  
-  try {
-    // Directly instantiate MappingCard to avoid recursion
-    const mappingCard = new MappingCard(
-      this._container.resolve('databaseService'),
-      this._container.resolve('mappingRepo'),
-      this._container.resolve('handlerFactory'),
-      this._logger
-    );
-    
-    return mappingCard.build(page);
-  } catch (error) {
-    this._logger.error('Failed to build mappings card', error);
-    return _buildErrorCardSafely('Mappings Error', error.message || 'Unknown error');
+  /**
+   * Show mappings configuration
+   * Directly builds the MappingCard to avoid circular dependency with global buildMappingsCard().
+   *
+   * @param {number} [page=0] - Page number (0-indexed)
+   * @returns {CardService.Card} Mappings configuration card
+   */
+  showMappings(page = 0) {
+    this._logger.debug('Showing mappings', { page });
+
+    try {
+      // Directly instantiate MappingCard to avoid recursion
+      const mappingCard = new MappingCard(
+        this._container.resolve('databaseService'),
+        this._container.resolve('mappingRepo'),
+        this._container.resolve('handlerFactory'),
+        this._logger
+      );
+
+      return mappingCard.build(page);
+    } catch (error) {
+      this._logger.error('Failed to build mappings card', error);
+      return _buildErrorCardSafely('Mappings Error', error.message || 'Unknown error');
+    }
   }
-}
 
 
   /**

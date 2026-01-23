@@ -11,11 +11,17 @@
 class RelationPropertyHandler extends BasePropertyHandler {
   /**
    * @param {NotionAdapter} notionAdapter - Notion adapter for lookups
+   * @param {ConfigRepository} configRepo - Config repository
+   * @param {Logger} logger - Logger instance
    */
-  constructor(notionAdapter) {
+  constructor(notionAdapter, configRepo, logger) {
     super('relation');
     /** @private */
     this._notion = notionAdapter;
+    /** @private */
+    this._config = configRepo;
+    /** @private */
+    this._logger = logger;
   }
 
   /**
@@ -36,9 +42,23 @@ buildUI(property, currentConfig, page = 0, mappingScope = 'email') { // Added pa
 
     // Show related database info
     if (relatedDbId) {
+      let relatedDbLabel = relatedDbId.substring(0, 8) + '...';
+      const apiKey = this._config ? this._config.get('apiKey') : '';
+      if (apiKey) {
+        try {
+          const relatedDb = this._notion.getDatabase(relatedDbId, apiKey);
+          if (relatedDb && relatedDb.title) {
+            relatedDbLabel = `${relatedDb.title} (${relatedDbId.substring(0, 8)}...)`;
+          }
+        } catch (error) {
+          if (this._logger) {
+            this._logger.debug('Failed to load related database name', error);
+          }
+        }
+      }
       widgets.push(
         CardService.newTextParagraph()
-          .setText(`<font color="#5F6368"><i>Links to database: ${relatedDbId.substring(0, 8)}...</i></font>`)
+          .setText(`<font color="#5F6368"><i>Links to database: ${relatedDbLabel}</i></font>`)
       );
     } else {
       widgets.push(
@@ -84,7 +104,9 @@ buildUI(property, currentConfig, page = 0, mappingScope = 'email') { // Added pa
                 propertyName: property.name,
                 databaseId: relatedDbId,
                 returnPage: String(page), // Pass the page number to the search function
-                mappingScope: mappingScope
+                mappingScope: mappingScope,
+                pageIndex: '0',
+                cursorStack: '[]'
               })
           )
       );
@@ -262,11 +284,35 @@ function searchRelationPages(event) {
     }
   }
 
-  const propId = event.parameters.propertyId;
-  const propName = event.parameters.propertyName;
-  const databaseId = event.parameters.databaseId;
-  const returnPage = event.parameters.returnPage || "0";
-  const searchQuery = event.formInput ? event.formInput[`relation_search_${propId}`] : '';
+  const params = event.parameters || {};
+  const propId = params.propertyId;
+  const propName = params.propertyName;
+  const databaseId = params.databaseId;
+  const returnPage = params.returnPage || '0';
+
+  let pageIndex = parseInt(params.pageIndex || '0', 10);
+  if (!Number.isFinite(pageIndex) || pageIndex < 0) pageIndex = 0;
+
+  let cursorStack = [];
+  try {
+    cursorStack = JSON.parse(params.cursorStack || '[]');
+    if (!Array.isArray(cursorStack)) cursorStack = [];
+  } catch (e) {
+    cursorStack = [];
+  }
+
+  let searchQuery = '';
+  if (event.formInput && Object.prototype.hasOwnProperty.call(event.formInput, `relation_search_inline_${propId}`)) {
+    searchQuery = event.formInput[`relation_search_inline_${propId}`] || '';
+    pageIndex = 0;
+    cursorStack = [];
+  } else if (event.formInput && Object.prototype.hasOwnProperty.call(event.formInput, `relation_search_${propId}`)) {
+    searchQuery = event.formInput[`relation_search_${propId}`] || '';
+    pageIndex = 0;
+    cursorStack = [];
+  } else {
+    searchQuery = params.searchQuery || '';
+  }
 
   try {
     const notionAdapter = container.resolve('notionAdapter');
@@ -274,7 +320,7 @@ function searchRelationPages(event) {
     const apiKey = configRepo.get('apiKey');
 
     // Build query with optional search filter
-    let queryPayload = { page_size: 100 };
+    let queryPayload = { page_size: 20 };
     
     if (searchQuery && searchQuery.trim()) {
       try {
@@ -291,7 +337,14 @@ function searchRelationPages(event) {
       }
     }
 
-    const pages = notionAdapter.queryDatabase(databaseId, queryPayload, apiKey);
+    if (cursorStack[pageIndex]) {
+      queryPayload.start_cursor = cursorStack[pageIndex];
+    }
+
+    const result = notionAdapter.queryDatabaseWithMeta(databaseId, queryPayload, apiKey);
+    const pages = result.results || [];
+    const hasMore = !!result.has_more;
+    const nextCursor = result.next_cursor || null;
 
     if (pages.length === 0) {
       return CardService.newActionResponseBuilder()
@@ -306,16 +359,43 @@ function searchRelationPages(event) {
       .setHeader(
         CardService.newCardHeader()
           .setTitle('📄 Select Pages to Link')
-          .setSubtitle(`Found ${pages.length} pages`)
+          .setSubtitle(`Found ${pages.length} pages (page ${pageIndex + 1})`)
       );
 
     const section = CardService.newCardSection();
+    section.addWidget(
+      CardService.newTextInput()
+        .setFieldName(`relation_search_inline_${propId}`)
+        .setTitle('Search within results')
+        .setHint('Type to filter pages in the related database')
+        .setValue(searchQuery || '')
+    );
+    section.addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText('🔍 Search')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('searchRelationPages')
+                .setParameters({
+                  propertyId: propId,
+                  propertyName: propName,
+                  databaseId: databaseId,
+                  returnPage: returnPage,
+                  mappingScope: mappingScope,
+                  pageIndex: '0',
+                  cursorStack: '[]'
+                })
+            )
+        )
+    );
     const selection = CardService.newSelectionInput()
       .setFieldName(`relation_selected_pages_${propId}`)
       .setTitle('Select Pages')
       .setType(CardService.SelectionInputType.CHECK_BOX);
 
-    pages.slice(0, 20).forEach(page => {
+    pages.forEach(page => {
       // CORRECTED: Extract title from page properties
       const pageTitle = (page && page.properties)
         ? (function extractTitle(p) {
@@ -364,6 +444,55 @@ function searchRelationPages(event) {
     );
 
     section.addWidget(buttonSet);
+    
+    if (pageIndex > 0 || (hasMore && nextCursor)) {
+      const pagingButtons = CardService.newButtonSet();
+      if (pageIndex > 0) {
+        pagingButtons.addButton(
+          CardService.newTextButton()
+            .setText('◀ Previous Page')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('searchRelationPages')
+                .setParameters({
+                  propertyId: propId,
+                  propertyName: propName,
+                  databaseId: databaseId,
+                  returnPage: returnPage,
+                  mappingScope: mappingScope,
+                  pageIndex: String(pageIndex - 1),
+                  cursorStack: JSON.stringify(cursorStack),
+                  searchQuery: searchQuery
+                })
+            )
+        );
+      }
+
+      if (hasMore && nextCursor) {
+        const nextStack = cursorStack.slice();
+        nextStack[pageIndex + 1] = nextCursor;
+        pagingButtons.addButton(
+          CardService.newTextButton()
+            .setText('Next Page ▶')
+            .setOnClickAction(
+              CardService.newAction()
+                .setFunctionName('searchRelationPages')
+                .setParameters({
+                  propertyId: propId,
+                  propertyName: propName,
+                  databaseId: databaseId,
+                  returnPage: returnPage,
+                  mappingScope: mappingScope,
+                  pageIndex: String(pageIndex + 1),
+                  cursorStack: JSON.stringify(nextStack),
+                  searchQuery: searchQuery
+                })
+            )
+        );
+      }
+
+      section.addWidget(pagingButtons);
+    }
     card.addSection(section);
 
     return CardService.newActionResponseBuilder()
@@ -428,8 +557,8 @@ function saveRelationSelection(event) {
     props.setProperty(mappingsKey, JSON.stringify(mappings));
 
     const updatedCard = mappingScope === 'attachment'
-      ? buildAttachmentMappingsCard(returnPage)
-      : buildMappingsCard(returnPage);
+      ? buildAttachmentMappingsListCard()
+      : buildMappingsListCard();
 
     return CardService.newActionResponseBuilder()
       .setNotification(
@@ -477,8 +606,8 @@ function clearRelationSelection(event) {
     props.setProperty(mappingsKey, JSON.stringify(mappings));
 
     const updatedCard = mappingScope === 'attachment'
-      ? buildAttachmentMappingsCard()
-      : buildMappingsCard();
+      ? buildAttachmentMappingsListCard()
+      : buildMappingsListCard();
 
     return CardService.newActionResponseBuilder()
       .setNotification(CardService.newNotification().setText('✅ Selection cleared'))

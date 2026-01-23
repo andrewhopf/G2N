@@ -32,7 +32,7 @@ class EmailPreviewCard extends BaseCardRenderer {
 
             this.logger.info('Building preview card', { 
                 messageId, 
-                configured: status.isReady 
+                configured: status.isReady
             });
 
             const header = this.buildHeader('📨 Save to Notion', 'Review before saving');
@@ -42,7 +42,7 @@ class EmailPreviewCard extends BaseCardRenderer {
                 if (trialSection) sections.push(trialSection);
             }
 
-            // ========== SECTION 0: DUPLICATE WARNING (AT TOP!) ==========
+            // ========== SECTION 0: DUPLICATE WARNING (EMAIL ONLY) ==========
             try {
                 const duplicateStartedAt = Date.now();
                 const duplicateWarning = this._checkForDuplicates(messageId, status);
@@ -59,95 +59,44 @@ class EmailPreviewCard extends BaseCardRenderer {
                 }
             } catch (duplicateError) {
                 this.logger.warn('Error checking duplicates (non-fatal)', duplicateError);
-                // Add a warning section about the check failure
                 sections.push(this._buildCheckFailureWarning(duplicateError.message || 'Unknown error during duplicate check'));
             }
 
-            // ========== SECTION 0B: ATTACHMENT DUPLICATE WARNING ==========
-            try {
-                const attachmentDuplicateStartedAt = Date.now();
-                const attachmentWarning = this._checkForAttachmentDuplicates(messageId);
-                this.logger.info('Preview attachment duplicate check timing', {
-                    messageId: messageId,
-                    durationMs: Date.now() - attachmentDuplicateStartedAt
-                });
-                if (attachmentWarning) {
-                    sections.push(attachmentWarning);
-                }
-            } catch (attachmentError) {
-                this.logger.warn('Error checking attachment duplicates (non-fatal)', attachmentError);
-                sections.push(this._buildCheckFailureWarning(attachmentError.message || 'Unknown error during attachment duplicate check'));
-            }
-
-            // ========== SECTION 1: EMAIL DETAILS ==========
+            // ========== SECTION 1: BASIC EMAIL PREVIEW ==========
+            const extracted = messageId ? this._extractEmailData(messageId) : null;
+            const emailData = extracted ? extracted.emailData : null;
             const detailsStartedAt = Date.now();
-            sections.push(this._buildEmailDetailsSection(messageId, status));
+            sections.push(this._buildBasicPreviewSection_(messageId, emailData));
             this.logger.info('Preview details section timing', {
                 messageId: messageId,
                 durationMs: Date.now() - detailsStartedAt
             });
 
-            // ========== SECTION 2: ATTACHMENTS (SELECTION) ==========
-            const selectionStartedAt = Date.now();
-            const attachmentSection = this._buildAttachmentSelectionSection(messageId);
-            if (attachmentSection) {
-                sections.push(attachmentSection);
+            // ========== SECTION 2: ATTACHMENT DUPLICATE WARNING ==========
+            try {
+                const attachmentDuplicate = this._checkForAttachmentDuplicates(messageId);
+                if (attachmentDuplicate) {
+                    sections.push(attachmentDuplicate);
+                }
+            } catch (attachmentError) {
+                this.logger.warn('Attachment duplicate check failed', attachmentError);
             }
-            this.logger.info('Preview attachment selection section timing', {
-                messageId: messageId,
-                durationMs: Date.now() - selectionStartedAt
-            });
 
-            // ========== SECTION 2B: ATTACHMENT MAPPING WARNING ==========
-            const mappingWarningStartedAt = Date.now();
-            const attachmentWarning = this._buildAttachmentMappingWarning(messageId);
-            if (attachmentWarning) {
-                sections.push(attachmentWarning);
+            // ========== SECTION 3: ATTACHMENT LIST (READ-ONLY) ==========
+            const listStartedAt = Date.now();
+            const attachmentList = this._buildAttachmentListSection_(messageId, emailData);
+            if (attachmentList) {
+                sections.push(attachmentList);
             }
-            this.logger.info('Preview attachment mapping warning timing', {
+            this.logger.info('Preview attachment list timing', {
                 messageId: messageId,
-                durationMs: Date.now() - mappingWarningStartedAt
-            });
-
-            // ========== SECTION 2C: ATTACHMENT UPLOADS ==========
-            const uploadsStartedAt = Date.now();
-            const uploadSection = this._buildAttachmentUploadSection(messageId);
-            if (uploadSection) {
-                sections.push(uploadSection);
-            }
-            this.logger.info('Preview attachment uploads section timing', {
-                messageId: messageId,
-                durationMs: Date.now() - uploadsStartedAt
-            });
-
-            // ========== SECTION 3: MAPPINGS SUMMARY ==========
-            const mappingSummaryStartedAt = Date.now();
-            sections.push(this._buildMappingSummarySection(messageId));
-            this.logger.info('Preview mapping summary timing', {
-                messageId: messageId,
-                durationMs: Date.now() - mappingSummaryStartedAt
-            });
-
-            // ========== SECTION 3B: ATTACHMENT MAPPINGS SUMMARY ==========
-            const attachmentSummaryStartedAt = Date.now();
-            const attachmentMappingSection = this._buildAttachmentMappingSummarySection(messageId);
-            if (attachmentMappingSection) {
-                sections.push(attachmentMappingSection);
-            }
-            this.logger.info('Preview attachment mapping summary timing', {
-                messageId: messageId,
-                durationMs: Date.now() - attachmentSummaryStartedAt
+                durationMs: Date.now() - listStartedAt
             });
 
             // ========== SECTION 4: ACTIONS ==========
-            sections.push(this._buildActionSection(status, messageId));
+            sections.push(this._buildPreviewActionSection_(status, messageId));
 
-            // ========== SECTION 5: Settings Button ==========
-            sections.push(
-                CardService.newCardSection().addWidget(
-                    this.newButton('⚙️ Settings', 'showG2NSettings')
-                )
-            );
+            // Settings button is provided in the action section.
 
             const card = this.buildCard(header, sections);
             this.logger.info('Preview card total timing', {
@@ -257,12 +206,48 @@ _checkForDuplicates(messageId, status) {
 
     // Get database schema
     const dbSchema = this.notionService.adapter.getDatabase(config.databaseId, config.apiKey);
+    const messageIdProp = (dbSchema.properties || []).find(
+      p => p.name === 'G2N Message ID' && p.type === 'rich_text'
+    );
     const urlProperties = (dbSchema.properties || []).filter(p => p.type === 'url');
 
     this.logger.info('URL properties in database', {
       count: urlProperties.length,
       names: urlProperties.map(p => p.name)
     });
+
+    if (messageIdProp) {
+      try {
+        const queryPayload = {
+          page_size: 5,
+          filter: {
+            property: messageIdProp.name,
+            rich_text: { equals: msgId }
+          }
+        };
+
+        const results = this.notionService.adapter.queryDatabase(
+          config.databaseId,
+          queryPayload,
+          config.apiKey
+        );
+
+        if (results && results.length > 0) {
+          const page = results[0];
+          const existingPage = {
+            id: page.id,
+            url: page.url,
+            title: this._extractPageTitle(page),
+            property: messageIdProp.name,
+            matchType: 'message ID',
+            messageId: msgId
+          };
+          return this._buildDuplicateWarningSection(existingPage, messageId);
+        }
+      } catch (error) {
+        this.logger.warn('Message ID duplicate check failed', error);
+      }
+    }
 
     // No URL properties -> show explicit info section
     if (urlProperties.length === 0) {
@@ -436,35 +421,28 @@ _checkForAttachmentDuplicates(messageId) {
   const attachments = selectedAttachments;
   if (!attachments || attachments.length === 0) return null;
 
-  const mappingRepo = this.container.resolve('attachmentMappingRepo');
-  const mappings = mappingRepo.getAll();
-  const nameMapping = this._findAttachmentMapping(mappings, 'attachmentName');
-  const sizeMapping = this._findAttachmentMapping(mappings, 'attachmentSize');
+  const hashPropertyName = config.attachmentHashPropertyName || 'G2N Attachment Hash';
+  const dbSchema = this.notionService.adapter.getDatabase(config.attachmentDatabaseId, config.apiKey);
+  const hashProperty = (dbSchema.properties || []).find(
+    p => p.type === 'rich_text' && p.name === hashPropertyName
+  );
 
-  if (!nameMapping) {
-    return this._buildAttachmentCheckUnavailable('Attachment Name mapping not configured.');
+  if (!hashProperty) {
+    return this._buildAttachmentCheckUnavailable('Attachment hash property not configured. It will be created on save.');
   }
 
   const duplicates = [];
 
   attachments.forEach(att => {
-    const name = att.getName ? att.getName() : '';
-    const size = att.getSize ? att.getSize() : 0;
-    if (!name) return;
-
-    const filters = [];
-    const nameFilter = this._buildEqualsFilter(nameMapping, name);
-    if (nameFilter) filters.push(nameFilter);
-
-    if (sizeMapping) {
-      const sizeFilter = this._buildEqualsFilter(sizeMapping, size);
-      if (sizeFilter) filters.push(sizeFilter);
-    }
-
-    if (filters.length === 0) return;
-
-    const filterPayload = filters.length === 1 ? filters[0] : { and: filters };
-    const queryPayload = { page_size: 5, filter: filterPayload };
+    const hashValue = this._buildAttachmentHash_(att);
+    if (!hashValue) return;
+    const queryPayload = {
+      page_size: 5,
+      filter: {
+        property: hashProperty.name,
+        rich_text: { equals: hashValue }
+      }
+    };
 
     try {
       const results = this.notionService.adapter.queryDatabase(
@@ -475,7 +453,7 @@ _checkForAttachmentDuplicates(messageId) {
 
       if (results && results.length > 0) {
         duplicates.push({
-          name: name,
+          name: att.getName ? att.getName() : 'Attachment',
           url: results[0].url,
           id: results[0].id
         });
@@ -827,6 +805,25 @@ _buildAttachmentUploadSection(messageId) {
     _getSelectionKey(messageId, emailData) {
         if (emailData && emailData.messageId) return emailData.messageId;
         return messageId;
+    }
+
+    /**
+     * Build a stable hash for attachment duplicate checks (name + size).
+     * @private
+     * @param {Blob} attachment
+     * @returns {string}
+     */
+    _buildAttachmentHash_(attachment) {
+        try {
+            const name = attachment && attachment.getName ? attachment.getName() : '';
+            const size = attachment && attachment.getSize ? attachment.getSize() : 0;
+            const raw = `${name}|${size}`;
+            const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+            return Utilities.base64EncodeWebSafe(bytes);
+        } catch (e) {
+            this.logger.warn('Failed to build attachment hash', e);
+            return '';
+        }
     }
 
 /**
@@ -1255,18 +1252,17 @@ _buildDuplicateWarningSection(existingPage, messageId) {
       )
   );
 
-  // Save anyway button
+  // Continue to save button
   buttonSet.addButton(
     CardService.newTextButton()
-      .setText('💾 Save Anyway')
+      .setText('💾 Continue to Save')
       .setBackgroundColor('#0F9D58')
       .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
       .setOnClickAction(
         CardService.newAction()
-          .setFunctionName('quickG2NSaveEmail')
+          .setFunctionName('showSaveToNotion')
           .setParameters({
-            messageId: messageId,
-            skipDuplicateCheck: 'true'
+            messageId: messageId
           })
       )
   );
@@ -1673,25 +1669,381 @@ _buildEmailDetailsSection(messageId, status) {
      * @param {string} messageId - Gmail message ID
      * @returns {CardService.CardSection} Action section
      */
-    _buildActionSection(status, messageId) {
-        const section = this.sectionWithHeader('🚀 Save to Notion');
+    _buildPreviewActionSection_(status, messageId) {
+        const section = this.sectionWithHeader('🚀 Next Step');
         
-        if (status.hasApiKey && status.hasDatabaseId && messageId) {
-            section.addWidget(
-                this.buttonSet(
-                    this.newButton('💾 Save Now', 'quickG2NSaveEmail', 
-                        { messageId }, {
-                            backgroundColor: '#0F9D58',
-                            filled: true
-                        }
-                    ),
-                    this.newButton('✉️ Email Mappings', 'showMappingsConfiguration')
-                )
-            );
-        } else {
+        if (!status.hasApiKey || !status.hasDatabaseId) {
             section.addWidget(this.newButton('⚙️ Finish Setup', 'showG2NSettings'));
+            return section;
         }
-        
+
+        if (!messageId) {
+            section
+                .setHeader('📭 No email selected')
+                .addWidget(this.textParagraph('Select an email in Gmail to preview and save it to Notion.'))
+                .addWidget(this.newButton('⚙️ Settings', 'showG2NSettings'));
+            return section;
+        }
+
+        let webImportButton = null;
+        try {
+            const signedUrl = buildSignedPreviewUrl(messageId);
+            webImportButton = this.newButton('🌐 Open Web Import', null, {}, { openUrl: signedUrl });
+        } catch (error) {
+            this.logger.warn('Failed to build web import URL', error);
+        }
+
+        section.addWidget(
+            this.buttonSet(
+                this.newButton('🔍 Review Mappings', 'showReviewMappings', { messageId }, { filled: true }),
+                this.newButton('⚙️ Settings', 'showG2NSettings'),
+                webImportButton
+            )
+        );
+
         return section;
+    }
+
+    /**
+     * Build review email mappings card
+     * @param {string} messageId
+     * @returns {CardService.Card}
+     */
+    buildReviewEmailMappings(messageId) {
+        const header = this.buildHeader('🔍 Review Email Mappings', 'Confirm email mappings');
+        const sections = [];
+        const status = this.databaseService.getStatus();
+
+        if (!messageId) {
+            return this.buildCard(
+                this.buildHeader('No Email Selected'),
+                [this.sectionWithHeader('Select Email').addWidget(
+                    this.textParagraph('Select an email in Gmail to review mappings.')
+                )]
+            );
+        }
+
+        const emailDuplicate = this._checkForDuplicates(messageId, status);
+        if (emailDuplicate) sections.push(emailDuplicate);
+
+        sections.push(this._buildEmailIdentitySection_(messageId, status));
+        sections.push(this._buildMappingSummaryLabelsSection_());
+
+        const actionButtons = [];
+        actionButtons.push(this.newButton('💾 Save to Notion', 'showSaveToNotion', { messageId }, { filled: true }));
+        if (this.configRepo.getAll().attachmentUseSeparateDatabase) {
+            actionButtons.push(this.newButton('📎 Review Attachment Mappings', 'showReviewAttachmentMappings', { messageId }));
+        }
+        actionButtons.push(this.newButton('⚙️ Settings', 'showG2NSettings'));
+        actionButtons.push(this.newButton('↩️ Back to Preview', 'showEmailPreview', { messageId }));
+        const actionSection = this.sectionWithHeader('✅ Ready to Save')
+            .addWidget(this.buttonSet.apply(this, actionButtons));
+        sections.push(actionSection);
+
+        return this.buildCard(header, sections);
+    }
+
+    /**
+     * Build review attachment mappings card
+     * @param {string} messageId
+     * @returns {CardService.Card}
+     */
+    buildReviewAttachmentMappings(messageId) {
+        const header = this.buildHeader('🔍 Review Attachment Mappings', 'Confirm attachment settings');
+        const sections = [];
+        const status = this.databaseService.getStatus();
+        const config = this.configRepo.getAll();
+
+        if (!messageId) {
+            return this.buildCard(
+                this.buildHeader('No Email Selected'),
+                [this.sectionWithHeader('Select Email').addWidget(
+                    this.textParagraph('Select an email in Gmail to review attachments.')
+                )]
+            );
+        }
+
+        const attachmentDuplicate = this._checkForAttachmentDuplicates(messageId);
+        if (attachmentDuplicate) sections.push(attachmentDuplicate);
+
+        const attachmentSection = this._buildAttachmentMappingLabelsSection_();
+        if (attachmentSection) {
+            sections.push(attachmentSection);
+        }
+
+        if (config.attachmentUseSeparateDatabase) {
+            const selectedList = this._buildSelectedAttachmentsListSection_(messageId);
+            if (selectedList) sections.push(selectedList);
+        } else {
+            const selectionSection = this._buildAttachmentSelectionSection(messageId);
+            if (selectionSection) sections.push(selectionSection);
+        }
+
+        sections.push(this._buildAttachmentSettingsSection_());
+
+        const actionButtons = [];
+        actionButtons.push(this.newButton('💾 Save to Notion', 'showSaveToNotion', { messageId }, { filled: true }));
+        actionButtons.push(this.newButton('📧 Review Email Mappings', 'showReviewEmailMappings', { messageId }));
+        actionButtons.push(this.newButton('⚙️ Settings', 'showG2NSettings'));
+        actionButtons.push(this.newButton('↩️ Back to Preview', 'showEmailPreview', { messageId }));
+        const actionSection = this.sectionWithHeader('✅ Ready to Save')
+            .addWidget(this.buttonSet.apply(this, actionButtons));
+        sections.push(actionSection);
+
+        return this.buildCard(header, sections);
+    }
+
+    _buildEmailIdentitySection_(messageId, status) {
+        const section = this.sectionWithHeader('📧 Email');
+        section.addWidget(this.keyValue('Saving to', status.databaseName || 'Not Selected'));
+
+        try {
+            const gmailAdapter = this.container.resolve('gmailAdapter');
+            const rawEmail = gmailAdapter.getMessage(messageId);
+            const emailData = rawEmail ? new EmailData(rawEmail) : null;
+            const subject = emailData ? (emailData.subject || '(No Subject)') : '(No Subject)';
+            const from = emailData ? (emailData.from || 'Unknown') : 'Unknown';
+            section.addWidget(this.keyValue('Subject', subject, true));
+            section.addWidget(this.keyValue('From', from));
+        } catch (e) {
+            section.addWidget(
+                this.textParagraph("<font color='#ea4335'>⚠️ Could not load email details</font>")
+            );
+        }
+
+        return section;
+    }
+
+    _buildMappingSummaryLabelsSection_() {
+        const section = this.sectionWithHeader('📋 Email Mappings');
+        const enabledMappings = this.mappingRepo.getEnabled();
+        const mappingKeys = Object.keys(enabledMappings);
+        const fieldRegistry = this.container.resolve('fieldRegistry');
+
+        if (mappingKeys.length > 0) {
+            let html = '<b>Enabled Mappings:</b><br/>';
+            mappingKeys.forEach(id => {
+                const m = enabledMappings[id];
+                const source = m.isStaticOption
+                    ? (m.selectedOption || 'Value')
+                    : this._formatMappingSourceLabel(m.emailField || '', fieldRegistry, false);
+                html += `• <b>${m.notionPropertyName}</b> ← ${source}<br/>`;
+            });
+            section.addWidget(this.textParagraph(html));
+        } else {
+            section.addWidget(this.textParagraph('<i>No fields mapped yet.</i>'));
+        }
+
+        return section;
+    }
+
+    _buildAttachmentMappingLabelsSection_() {
+        const config = this.configRepo.getAll();
+        const section = this.sectionWithHeader('📋 Attachment Mappings');
+        if (!config.attachmentUseSeparateDatabase) {
+            section.addWidget(this.textParagraph(
+                '<i>Attachments will be embedded on the email page (no separate attachment database).</i>'
+            ));
+            return section;
+        }
+        const attachmentMappingRepo = this.container.resolve('attachmentMappingRepo');
+        const attachmentFieldRegistry = this.container.resolve('attachmentFieldRegistry');
+        const enabledMappings = attachmentMappingRepo.getEnabled();
+        const mappingKeys = Object.keys(enabledMappings);
+        const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Attachment DB';
+
+        section.addWidget(this.textParagraph(`Database: <b>${attachmentDbName}</b>`));
+
+        if (mappingKeys.length > 0) {
+            let html = '<b>Enabled Mappings:</b><br/>';
+            mappingKeys.forEach(id => {
+                const m = enabledMappings[id];
+                const source = m.isStaticOption
+                    ? (m.selectedOption || 'Value')
+                    : this._formatMappingSourceLabel(m.emailField || '', attachmentFieldRegistry, true);
+                html += `• <b>${m.notionPropertyName}</b> ← ${source}<br/>`;
+            });
+            section.addWidget(this.textParagraph(html));
+        } else {
+            section.addWidget(this.textParagraph('<i>No attachment fields mapped yet.</i>'));
+        }
+
+        return section;
+    }
+
+    _buildAttachmentSettingsSection_() {
+        const section = this.sectionWithHeader('📎 Attachment Settings');
+        const config = this.configRepo.getAll();
+
+        const dbName = config.attachmentDatabaseName || config.databaseName || 'Not Selected';
+        const useSeparate = config.attachmentUseSeparateDatabase === true;
+        const filesPropertyName = config.filesPropertyName || 'Attachments';
+        const filesPropertyType = config.filesPropertyType === 'url' ? 'URL' : 'Files';
+        const embedEmail = config.attachmentEmbedEmailPage === true ? 'Yes' : 'No';
+        const embedAttachment = config.attachmentEmbedAttachmentPage === true ? 'Yes' : 'No';
+
+        section.addWidget(this.keyValue('Use separate DB', useSeparate ? 'Yes' : 'No'));
+        section.addWidget(this.keyValue('Database', dbName));
+        section.addWidget(this.keyValue('Files property', `${filesPropertyName} (${filesPropertyType})`));
+        section.addWidget(this.keyValue('Embed on email page', embedEmail));
+        section.addWidget(this.keyValue('Embed on attachment pages', embedAttachment));
+
+        return section;
+    }
+
+    _buildSelectedAttachmentsListSection_(messageId) {
+        try {
+            const extracted = this._extractEmailData(messageId);
+            const emailData = extracted ? extracted.emailData : null;
+            const attachments = this._getAttachmentsForMessage(messageId, emailData);
+            if (!attachments || attachments.length === 0) return null;
+
+            const selectionKey = this._getSelectionKey(messageId, emailData);
+            const attachmentService = this.container.resolve('attachmentService');
+            const selectedNames = attachmentService.getSelectedAttachmentNames(selectionKey);
+
+            const selected = selectedNames === null
+                ? attachments.map(att => att.getName ? att.getName() : 'Attachment')
+                : selectedNames;
+
+            const section = this.sectionWithHeader('📎 Selected Attachments');
+            if (!selected || selected.length === 0) {
+                section.addWidget(this.textParagraph('<i>No attachments selected.</i>'));
+                return section;
+            }
+
+            let html = '<b>Selected:</b><br/>';
+            selected.forEach(name => {
+                html += `• ${name}<br/>`;
+            });
+            section.addWidget(this.textParagraph(html));
+            return section;
+        } catch (error) {
+            this.logger.warn('Failed to build selected attachments list', error);
+            return null;
+        }
+    }
+
+    /**
+     * Build basic email preview section for fast load.
+     * @private
+     */
+  _buildBasicPreviewSection_(messageId, emailData) {
+        const section = this.sectionWithHeader('📧 Email Preview');
+        if (!messageId || !emailData) {
+            section.addWidget(this.textParagraph('<i>Email details unavailable.</i>'));
+            return section;
+        }
+
+        const subject = emailData.subject || '(No Subject)';
+        const from = emailData.from || 'Unknown';
+        const date = emailData.date ? emailData.date.toLocaleString() : 'Unknown';
+        const snippet = emailData.getPreview ? emailData.getPreview(220) : (emailData.snippet || '');
+
+        section.addWidget(this.keyValue('Subject', subject, true));
+        section.addWidget(this.keyValue('From', from));
+        section.addWidget(this.keyValue('Date', date));
+        try {
+            const attachments = this._getAttachmentsForMessage(messageId, emailData);
+            const count = Array.isArray(attachments) ? attachments.length : 0;
+            const label = count === 1 ? '1 Attachment' : `${count} Attachments`;
+            section.addWidget(this.keyValue('Attachments', label));
+        } catch (e) {
+            // non-fatal
+        }
+        if (snippet) {
+            section.addWidget(this.textParagraph(`<i>${snippet}</i>`));
+        }
+
+        return section;
+    }
+
+    /**
+     * Build attachment list section (read-only).
+     * @private
+     */
+    _buildAttachmentListSection_(messageId, emailData) {
+        if (!messageId) return null;
+        const section = this.sectionWithHeader('📎 Attachments');
+        const attachmentService = this.container.resolve('attachmentService');
+        const attachments = attachmentService.getAttachmentsForMessage(
+            messageId,
+            emailData ? emailData.attachments : []
+        );
+
+        if (!attachments || attachments.length === 0) {
+            section.addWidget(this.textParagraph('<i>No attachments found.</i>'));
+            return section;
+        }
+
+        let html = '<b>Attachments:</b><br/>';
+        attachments.forEach(att => {
+            const name = att.getName ? att.getName() : 'Attachment';
+            const size = att.getSize ? att.getSize() : 0;
+            const sizeLabel = attachmentService.formatFileSize(size);
+            html += `• ${name} <font color="#5F6368">(${sizeLabel})</font><br/>`;
+        });
+        section.addWidget(this.textParagraph(html));
+        return section;
+    }
+
+    /**
+     * Build lightweight attachments loader section for fast preview.
+     * @private
+     * @param {string} messageId
+     * @returns {CardService.CardSection}
+     */
+    _buildLoadAttachmentsSection_(messageId) {
+        return CardService.newCardSection()
+            .setHeader('📎 Attachments')
+            .addWidget(
+                CardService.newTextParagraph()
+                    .setText('Load attachments on demand to keep preview fast.')
+            )
+            .addWidget(
+                CardService.newButtonSet()
+                    .addButton(
+                        CardService.newTextButton()
+                            .setText('📎 Load Attachments')
+                            .setOnClickAction(
+                                CardService.newAction()
+                                    .setFunctionName('showEmailPreview')
+                                    .setParameters({
+                                        messageId: messageId,
+                                        loadAttachments: 'true'
+                                    })
+                            )
+                    )
+            );
+    }
+
+    /**
+     * Build full preview loader section for fast preview.
+     * @private
+     * @param {string} messageId
+     * @returns {CardService.CardSection}
+     */
+    _buildLoadFullPreviewSection_(messageId) {
+        return CardService.newCardSection()
+            .setHeader('🔎 Full Preview')
+            .addWidget(
+                CardService.newTextParagraph()
+                    .setText('Load duplicate checks and mapping summaries.')
+            )
+            .addWidget(
+                CardService.newButtonSet()
+                    .addButton(
+                        CardService.newTextButton()
+                            .setText('🔎 Load Full Preview')
+                            .setOnClickAction(
+                                CardService.newAction()
+                                    .setFunctionName('showEmailPreview')
+                                    .setParameters({
+                                        messageId: messageId,
+                                        fullPreview: 'true'
+                                    })
+                            )
+                    )
+            );
     }
 }

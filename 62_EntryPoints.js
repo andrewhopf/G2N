@@ -102,6 +102,122 @@ function showEmailPreview(event) {
 }
 
 /**
+ * Show review mappings card
+ * @param {Object} event - GAS event with gmail data
+ * @returns {CardService.Card} Review mappings card
+ */
+function showReviewMappings(event) {
+  try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
+    const messageId = event?.gmail?.messageId || event?.parameters?.messageId;
+    if (!messageId) {
+      return _buildErrorCardSafely('No Email Selected', 'Select an email in Gmail to review mappings.');
+    }
+    const app = getApp();
+    const container = app.getContainer();
+    const databaseService = container.resolve('databaseService');
+    const status = databaseService.getStatus();
+    if (!status.hasApiKey || !status.hasDatabaseId) {
+      return _buildErrorCardSafely('Configuration Required', 'Set up your API key and database first.');
+    }
+    const configRepo = container.resolve('configRepo');
+    const config = configRepo.getAll();
+    if (config.attachmentUseSeparateDatabase) {
+      const card = CardService.newCardBuilder()
+        .setHeader(
+          CardService.newCardHeader()
+            .setTitle('🔍 Review Mappings')
+            .setSubtitle('Choose a review card')
+        )
+        .addSection(
+          CardService.newCardSection()
+            .addWidget(
+              CardService.newButtonSet()
+                .addButton(
+                  CardService.newTextButton()
+                    .setText('📧 Review Email Mappings')
+                    .setOnClickAction(
+                      CardService.newAction()
+                        .setFunctionName('showReviewEmailMappings')
+                        .setParameters({ messageId: messageId })
+                    )
+                )
+                .addButton(
+                  CardService.newTextButton()
+                    .setText('📎 Review Attachment Mappings')
+                    .setOnClickAction(
+                      CardService.newAction()
+                        .setFunctionName('showReviewAttachmentMappings')
+                        .setParameters({ messageId: messageId })
+                    )
+                )
+            )
+        )
+        .build();
+      return card;
+    }
+    const previewCard = new EmailPreviewCard(container);
+    return previewCard.buildReviewEmailMappings(messageId);
+  } catch (error) {
+    console.error('Review mappings error:', error);
+    return _buildErrorCardSafely('Review Mappings Error', error.message || 'Unknown error');
+  }
+}
+
+function showReviewEmailMappings(event) {
+  try {
+    const messageId = event?.gmail?.messageId || event?.parameters?.messageId;
+    if (!messageId) {
+      return _buildErrorCardSafely('No Email Selected', 'Select an email in Gmail to review mappings.');
+    }
+    const app = getApp();
+    const container = app.getContainer();
+    const previewCard = new EmailPreviewCard(container);
+    return previewCard.buildReviewEmailMappings(messageId);
+  } catch (error) {
+    console.error('Review email mappings error:', error);
+    return _buildErrorCardSafely('Review Mappings Error', error.message || 'Unknown error');
+  }
+}
+
+function showReviewAttachmentMappings(event) {
+  try {
+    const messageId = event?.gmail?.messageId || event?.parameters?.messageId;
+    if (!messageId) {
+      return _buildErrorCardSafely('No Email Selected', 'Select an email in Gmail to review mappings.');
+    }
+    const app = getApp();
+    const container = app.getContainer();
+    const previewCard = new EmailPreviewCard(container);
+    return previewCard.buildReviewAttachmentMappings(messageId);
+  } catch (error) {
+    console.error('Review attachment mappings error:', error);
+    return _buildErrorCardSafely('Review Mappings Error', error.message || 'Unknown error');
+  }
+}
+
+/**
+ * Show save-to-Notion card
+ * @param {Object} event - GAS event with gmail data
+ * @returns {CardService.Card} Save-to-Notion card
+ */
+function showSaveToNotion(event) {
+  try {
+    if (typeof getTrialGuardCard_ === 'function') {
+      const guardCard = getTrialGuardCard_();
+      if (guardCard) return guardCard;
+    }
+    return getApp().showSaveToNotion(event);
+  } catch (error) {
+    console.error('Save-to-Notion error:', error);
+    return _buildErrorCardSafely('Save to Notion Error', error.message || 'Unknown error');
+  }
+}
+
+/**
  * Show preview from the add-on menu
  * @param {Object} event - GAS event
  * @returns {CardService.Card} Email preview card
@@ -206,11 +322,11 @@ function buildAttachmentsCard() {
       const actions = CardService.newButtonSet()
         .addButton(
           CardService.newTextButton()
-            .setText('✅ Ensure Field')
+            .setText('✅ Create Files Property')
             .setBackgroundColor('#0F9D58')
             .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
             .setOnClickAction(
-              CardService.newAction().setFunctionName('ensureAttachmentField')
+              CardService.newAction().setFunctionName('confirmCreateFilesProperty')
             )
         )
         .addButton(
@@ -241,14 +357,28 @@ function buildAttachmentsCard() {
  */
 function ensureAttachmentField(event) {
   try {
-    const formInput = event.formInput || {};
-    const selectedDb = formInput.selected_database_for_attachments;
-    const propName = (formInput.attachment_property_name || 'Attachments').trim();
+    const formInput = event?.formInput || {};
+    let selectedDb = formInput.attachment_database_id ||
+      formInput.selected_database_for_attachments ||
+      event?.parameters?.selectedDb;
+    const propName = (formInput.attachment_property_name ||
+      event?.parameters?.propertyName ||
+      'Attachments').trim();
+
+    if (!selectedDb) {
+      try {
+        const configRepo = container.resolve('configRepo');
+        const config = configRepo.getAll();
+        selectedDb = config.attachmentDatabaseId || config.databaseId || '';
+      } catch (e) {
+        // ignore fallback failures
+      }
+    }
     
     if (!selectedDb) {
       return CardService.newActionResponseBuilder()
         .setNotification(
-          CardService.newNotification().setText('⚠️ Please select a database')
+          CardService.newNotification().setText('⚠️ Please select a database (or save it in settings first)')
         )
         .build();
     }
@@ -295,6 +425,89 @@ function ensureAttachmentField(event) {
       .build();
   } catch (error) {
     console.error('ensureAttachmentField error:', error);
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText('❌ ' + (error.message || 'Unknown error'))
+      )
+      .build();
+  }
+}
+
+/**
+ * Confirm creation of the files property before applying changes.
+ * @param {Object} event - GAS event
+ * @returns {CardService.ActionResponse} Action response
+ */
+function confirmCreateFilesProperty(event) {
+  try {
+    const formInput = event?.formInput || {};
+    let selectedDb = formInput.attachment_database_id ||
+      formInput.selected_database_for_attachments ||
+      event?.parameters?.selectedDb;
+    const propName = (formInput.attachment_property_name ||
+      event?.parameters?.propertyName ||
+      'Attachments').trim();
+
+    if (!selectedDb) {
+      try {
+        const configRepo = container.resolve('configRepo');
+        const config = configRepo.getAll();
+        selectedDb = config.attachmentDatabaseId || config.databaseId || '';
+      } catch (e) {
+        // ignore fallback failures
+      }
+    }
+
+    if (!selectedDb) {
+      return CardService.newActionResponseBuilder()
+        .setNotification(
+          CardService.newNotification().setText('⚠️ Please select a database (or save it in settings first)')
+        )
+        .build();
+    }
+
+    const card = CardService.newCardBuilder()
+      .setHeader(
+        CardService.newCardHeader().setTitle('Create Files property?')
+      )
+      .addSection(
+        CardService.newCardSection()
+          .addWidget(
+            CardService.newTextParagraph()
+              .setText(`This will create a Files property named "<b>${propName}</b>" in the selected Notion database. Continue?`)
+          )
+          .addWidget(
+            CardService.newButtonSet()
+              .addButton(
+                CardService.newTextButton()
+                  .setText('✅ Create')
+                  .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+                  .setBackgroundColor('#0F9D58')
+                  .setOnClickAction(
+                    CardService.newAction()
+                      .setFunctionName('ensureAttachmentField')
+                      .setParameters({
+                        selectedDb: selectedDb,
+                        propertyName: propName
+                      })
+                  )
+              )
+              .addButton(
+                CardService.newTextButton()
+                  .setText('↩️ Cancel')
+                  .setOnClickAction(
+                    CardService.newAction().setFunctionName('showAttachmentsConfiguration')
+                  )
+              )
+          )
+      )
+      .build();
+
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().pushCard(card))
+      .build();
+  } catch (error) {
+    console.error('confirmCreateFilesProperty error:', error);
     return CardService.newActionResponseBuilder()
       .setNotification(
         CardService.newNotification().setText('❌ ' + (error.message || 'Unknown error'))
@@ -398,6 +611,96 @@ function saveConfiguration(event) {
 }
 
 /**
+ * Request HMAC key rotation confirmation.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function requestRotateHmacKeys(event) {
+  if (typeof isAdminUser_ !== 'function' || !isAdminUser_()) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('❌ Unauthorized'))
+      .build();
+  }
+  if (typeof setRotateConfirmState_ === 'function') {
+    setRotateConfirmState_(true);
+  }
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('⚠️ Confirm rotation below'))
+    .setNavigation(CardService.newNavigation().updateCard(buildSettingsCard()))
+    .build();
+}
+
+/**
+ * Confirm HMAC key rotation.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function confirmRotateHmacKeys(event) {
+  if (typeof isAdminUser_ !== 'function' || !isAdminUser_()) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('❌ Unauthorized'))
+      .build();
+  }
+  var confirmText = '';
+  try {
+    confirmText = String(event && event.formInput && event.formInput.rotate_confirm_text || '').trim().toUpperCase();
+  } catch (error) {
+    confirmText = '';
+  }
+  if (confirmText !== 'ROTATE') {
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('⚠️ Type ROTATE to confirm'))
+      .setNavigation(CardService.newNavigation().updateCard(buildSettingsCard()))
+      .build();
+  }
+  if (typeof rotateHmacKeys_ === 'function') {
+    rotateHmacKeys_();
+  }
+  if (typeof setRotateConfirmState_ === 'function') {
+    setRotateConfirmState_(false);
+  }
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('✅ HMAC keys rotated'))
+    .setNavigation(CardService.newNavigation().updateCard(buildSettingsCard()))
+    .build();
+}
+
+/**
+ * Cancel pending HMAC key rotation.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function cancelRotateHmacKeys(event) {
+  if (typeof setRotateConfirmState_ === 'function') {
+    setRotateConfirmState_(false);
+  }
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('Rotation canceled'))
+    .setNavigation(CardService.newNavigation().updateCard(buildSettingsCard()))
+    .build();
+}
+
+/**
+ * Clear HMAC V0 key after overlap window.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function clearHmacKeyV0(event) {
+  if (typeof isAdminUser_ !== 'function' || !isAdminUser_()) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('❌ Unauthorized'))
+      .build();
+  }
+  if (typeof clearHmacKeyV0_ === 'function') {
+    clearHmacKeyV0_();
+  }
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('✅ V0 key cleared'))
+    .setNavigation(CardService.newNavigation().updateCard(buildSettingsCard()))
+    .build();
+}
+
+/**
  * Show database selection
  * @returns {CardService.Card} Database selection card
  */
@@ -419,10 +722,7 @@ function showDatabaseSelection() {
 function showMappingsConfiguration(event) {
   try {
     getApp(); // Initialize
-    const page = event?.parameters?.targetPage 
-      ? parseInt(event.parameters.targetPage, 10)
-      : 0;
-    return buildMappingsCard(page);
+    return buildMappingsListCard();
   } catch (error) {
     console.error('Mappings configuration error:', error);
     return _buildErrorCardSafely('Mappings Configuration Error', error.message || 'Unknown error');
@@ -567,10 +867,7 @@ function showAttachmentMappingsConfiguration(event) {
         'Enable "Save attachments to a separate database" in Settings to configure attachment mappings.'
       );
     }
-    const page = event?.parameters?.targetPage
-      ? parseInt(event.parameters.targetPage, 10)
-      : 0;
-    return buildAttachmentMappingsCard(page);
+    return buildAttachmentMappingsListCard();
   } catch (error) {
     console.error('Attachment mappings configuration error:', error);
     return _buildErrorCardSafely('Attachment Mappings Error', error.message || 'Unknown error');
@@ -1165,6 +1462,56 @@ function buildMappingsCard(page) {
 }
 
 /**
+ * Build mappings list card (summary list -> detail)
+ * @returns {CardService.Card}
+ */
+function buildMappingsListCard() {
+  try {
+    getApp();
+    return _buildMappingListCard_({
+      databaseService: container.resolve('databaseService'),
+      mappingRepo: container.resolve('mappingRepo'),
+      handlerFactory: container.resolve('handlerFactory'),
+      logger: container.resolve('logger'),
+      cardTitle: '📋 Map Email → Notion',
+      subtitlePrefix: 'Database',
+      mappingScope: 'email',
+      configActionName: 'showG2NSettings',
+      configActionLabel: '↩️ Cancel',
+      finishActionName: 'finishMappingsConfiguration'
+    });
+  } catch (error) {
+    console.error('buildMappingsListCard error:', error);
+    return _buildErrorCardSafely('Mappings Error', error.message || 'Unknown error');
+  }
+}
+
+/**
+ * Build attachment mappings list card (summary list -> detail)
+ * @returns {CardService.Card}
+ */
+function buildAttachmentMappingsListCard() {
+  try {
+    getApp();
+    return _buildMappingListCard_({
+      databaseService: container.resolve('attachmentDatabaseService'),
+      mappingRepo: container.resolve('attachmentMappingRepo'),
+      handlerFactory: container.resolve('attachmentHandlerFactory'),
+      logger: container.resolve('logger'),
+      cardTitle: '📎 Map Attachments → Notion',
+      subtitlePrefix: 'Attachment DB',
+      mappingScope: 'attachment',
+      configActionName: 'showG2NSettings',
+      configActionLabel: '↩️ Cancel',
+      finishActionName: 'finishAttachmentMappingsConfiguration'
+    });
+  } catch (error) {
+    console.error('buildAttachmentMappingsListCard error:', error);
+    return _buildErrorCardSafely('Attachment Mappings Error', error.message || 'Unknown error');
+  }
+}
+
+/**
  * Build attachment mappings configuration card
  * @param {number} [page=0] - 0-indexed page number
  * @returns {CardService.Card}
@@ -1195,6 +1542,279 @@ function buildAttachmentMappingsCard(page) {
     console.error('buildAttachmentMappingsCard error:', error);
     return _buildErrorCardSafely('Attachment Mappings Error', error.message || 'Unknown error');
   }
+}
+
+/**
+ * Open a single property mapping detail card.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function showMappingPropertyDetail(event) {
+  try {
+    getApp();
+    const params = event?.parameters || {};
+    const propertyId = params.propertyId;
+    const mappingScope = params.mappingScope || 'email';
+    if (!propertyId) {
+      return CardService.newActionResponseBuilder()
+        .setNotification(CardService.newNotification().setText('⚠️ Missing property'))
+        .build();
+    }
+    const card = _buildMappingPropertyDetailCard_(propertyId, mappingScope);
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().updateCard(card))
+      .build();
+  } catch (error) {
+    console.error('showMappingPropertyDetail error:', error);
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('❌ ' + (error.message || 'Unknown error')))
+      .build();
+  }
+}
+
+/**
+ * Save a single property mapping and return to list.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function saveMappingPropertyDetail(event) {
+  try {
+    getApp();
+    const mappingScope = event?.parameters?.mappingScope || 'email';
+    if (mappingScope === 'attachment') {
+      _saveAttachmentMappingsFromForm(event.formInput);
+    } else {
+      _saveMappingsFromForm(event.formInput);
+    }
+    const card = mappingScope === 'attachment'
+      ? buildAttachmentMappingsListCard()
+      : buildMappingsListCard();
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('✅ Mapping saved'))
+      .setNavigation(CardService.newNavigation().updateCard(card))
+      .build();
+  } catch (error) {
+    console.error('saveMappingPropertyDetail error:', error);
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('❌ ' + (error.message || 'Unknown error')))
+      .build();
+  }
+}
+
+/**
+ * Cancel property mapping edit and return to list.
+ * @param {Object} event
+ * @returns {CardService.ActionResponse}
+ */
+function cancelMappingPropertyDetail(event) {
+  try {
+    const mappingScope = event?.parameters?.mappingScope || 'email';
+    const card = mappingScope === 'attachment'
+      ? buildAttachmentMappingsListCard()
+      : buildMappingsListCard();
+    return CardService.newActionResponseBuilder()
+      .setNavigation(CardService.newNavigation().updateCard(card))
+      .build();
+  } catch (error) {
+    console.error('cancelMappingPropertyDetail error:', error);
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('❌ ' + (error.message || 'Unknown error')))
+      .build();
+  }
+}
+
+function _buildMappingListCard_(options) {
+  const databaseService = options.databaseService;
+  const mappingRepo = options.mappingRepo;
+  const handlerFactory = options.handlerFactory;
+  const logger = options.logger;
+  const cardTitle = options.cardTitle;
+  const subtitlePrefix = options.subtitlePrefix;
+  const mappingScope = options.mappingScope;
+  const configActionName = options.configActionName;
+  const configActionLabel = options.configActionLabel || '⚙️ Settings';
+  const finishActionName = options.finishActionName;
+
+  const status = databaseService.getStatus();
+  if (!status.hasApiKey || !status.hasDatabaseId) {
+    return _buildErrorCardSafely('Configuration Required', 'Set up your API key and database first.');
+  }
+
+  const schema = databaseService.getCurrentSchema();
+  if (!schema) {
+    return _buildErrorCardSafely('Schema Error', 'Could not load database schema.');
+  }
+
+  const mappings = mappingRepo.getAll();
+  const properties = _getMappablePropertiesForList_(databaseService, handlerFactory, logger);
+
+  const card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle(cardTitle)
+        .setSubtitle(`${subtitlePrefix}: ${schema.title}`)
+    );
+
+  const infoSection = CardService.newCardSection()
+    .addWidget(
+      CardService.newTextParagraph()
+        .setText(`<b>Mappable properties:</b> ${properties.length}`)
+    );
+  card.addSection(infoSection);
+
+  const listSection = CardService.newCardSection()
+    .setHeader('Choose a property to configure');
+
+  properties.forEach(prop => {
+    const mapping = mappings[prop.id] || {};
+    const isConfigured = _isMappingConfigured_(mapping);
+    const label = `${isConfigured ? '✅' : '⬜'} ${prop.name} (${prop.type})`;
+    const btn = CardService.newTextButton()
+      .setText(label)
+      .setOnClickAction(
+        CardService.newAction()
+          .setFunctionName('showMappingPropertyDetail')
+          .setParameters({ propertyId: prop.id, mappingScope: mappingScope })
+      );
+    if (isConfigured) {
+      btn.setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setBackgroundColor('#0F9D58');
+    }
+    listSection.addWidget(btn);
+  });
+
+  card.addSection(listSection);
+
+  const actionsSection = CardService.newCardSection()
+    .setHeader('Actions')
+    .addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText(configActionLabel)
+            .setOnClickAction(
+              CardService.newAction().setFunctionName(configActionName)
+            )
+        )
+        .addButton(
+          CardService.newTextButton()
+            .setText('✅ Done')
+            .setOnClickAction(
+              CardService.newAction().setFunctionName(finishActionName)
+            )
+        )
+    );
+  card.addSection(actionsSection);
+
+  return card.build();
+}
+
+function _buildMappingPropertyDetailCard_(propertyId, mappingScope) {
+  const isAttachment = mappingScope === 'attachment';
+  const databaseService = isAttachment
+    ? container.resolve('attachmentDatabaseService')
+    : container.resolve('databaseService');
+  const mappingRepo = isAttachment
+    ? container.resolve('attachmentMappingRepo')
+    : container.resolve('mappingRepo');
+  const handlerFactory = isAttachment
+    ? container.resolve('attachmentHandlerFactory')
+    : container.resolve('handlerFactory');
+
+  const schema = databaseService.getCurrentSchema();
+  if (!schema) {
+    return _buildErrorCardSafely('Schema Error', 'Could not load database schema.');
+  }
+
+  const property = schema.properties.find(prop => prop.id === propertyId);
+  if (!property) {
+    return _buildErrorCardSafely('Property Error', 'Property not found.');
+  }
+
+  const mapping = mappingRepo.get(propertyId) || {};
+  const handler = handlerFactory.getHandler(property.type);
+  if (!handler) {
+    return _buildErrorCardSafely('Unsupported', 'This property type cannot be configured.');
+  }
+
+  const card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle(`${property.name}`)
+        .setSubtitle(`${property.type} mapping`)
+    );
+
+  const section = CardService.newCardSection();
+  const widgets = handler.buildUI(property, mapping, 0, mappingScope);
+  widgets.forEach(widget => section.addWidget(widget));
+
+  section.addWidget(CardService.newDivider());
+  section.addWidget(
+    CardService.newButtonSet()
+      .addButton(
+        CardService.newTextButton()
+          .setText('💾 Save')
+          .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+          .setBackgroundColor('#0F9D58')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('saveMappingPropertyDetail')
+              .setParameters({ mappingScope: mappingScope })
+          )
+      )
+      .addButton(
+        CardService.newTextButton()
+          .setText('↩️ Back')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('cancelMappingPropertyDetail')
+              .setParameters({ mappingScope: mappingScope })
+          )
+      )
+  );
+
+  card.addSection(section);
+  return card.build();
+}
+
+function _getMappablePropertiesForList_(databaseService, handlerFactory, logger) {
+  const excludedNames = ['Gmail link', 'Gmail Link'];
+  let properties = databaseService.getMappableProperties();
+
+  properties = properties.filter(prop => {
+    const isExcludedByName = excludedNames.some(excluded =>
+      prop.name.toLowerCase() === excluded.toLowerCase()
+    );
+    if (isExcludedByName) return false;
+
+    const handler = handlerFactory.getHandler(prop.type);
+    if (!handler) {
+      if (logger && logger.debug) {
+        logger.debug('Hiding property - no handler available', { name: prop.name, type: prop.type });
+      }
+      return false;
+    }
+    return true;
+  });
+
+  properties.sort((a, b) => {
+    if (a.isTitle) return -1;
+    if (b.isTitle) return 1;
+    if (a.isRequired && !b.isRequired) return -1;
+    if (!a.isRequired && b.isRequired) return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return properties;
+}
+
+function _isMappingConfigured_(mapping) {
+  if (!mapping) return false;
+  if (mapping.isRequired) return true;
+  if (mapping.enabled === true || mapping.enabled === 'true') return true;
+  if (Array.isArray(mapping.selectedPages) && mapping.selectedPages.length > 0) return true;
+  if (mapping.isStaticOption && mapping.selectedOption) return true;
+  return false;
 }
 
 /**

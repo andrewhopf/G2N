@@ -215,6 +215,17 @@ class CardFactory {
           .setSubtitle('Configure Gmail to Notion')
       );
 
+    if (!config.apiKey) {
+      card.addSection(
+        CardService.newCardSection()
+          .setHeader('👋 First-time setup')
+          .addWidget(
+            CardService.newTextParagraph()
+              .setText("Paste your Notion API key (starts with 'secret_') to connect.")
+          )
+      );
+    }
+
     // API Key section
     card.addSection(
       CardService.newCardSection()
@@ -230,7 +241,7 @@ class CardFactory {
 
     // Database section
     const dbSection = CardService.newCardSection()
-      .setHeader('🗄️ Database');
+      .setHeader('📧 Gmail to Notion Database');
 
     if (status.hasApiKey) {
       dbSection.addWidget(
@@ -239,14 +250,32 @@ class CardFactory {
             ? `Selected: <b>${status.databaseName}</b>` 
             : 'No database selected')
       );
+      try {
+        const databases = this._container.resolve('notionService').listDatabases() || [];
+        const selection = CardService.newSelectionInput()
+          .setType(CardService.SelectionInputType.DROPDOWN)
+          .setFieldName('selected_database')
+          .setTitle('Choose Database');
+        selection.addItem('-- Select database --', '', !config.databaseId);
+        databases.forEach(db => {
+          const isSelected = db.id === config.databaseId;
+          selection.addItem(db.name, db.id, isSelected);
+        });
+        dbSection.addWidget(selection);
+      } catch (e) {
+        dbSection.addWidget(
+          CardService.newTextParagraph()
+            .setText('<i>Unable to load databases. Check your Notion connection.</i>')
+        );
+      }
       dbSection.addWidget(
         CardService.newButtonSet()
           .addButton(
             CardService.newTextButton()
-              .setText('🗄️ Select Database')
+              .setText('💾 Save Database')
               .setOnClickAction(
                 CardService.newAction()
-                  .setFunctionName('showDatabaseSelection')
+                  .setFunctionName('saveDatabaseSelection')
               )
           )
       );
@@ -290,7 +319,8 @@ class CardFactory {
 
     if (status.hasApiKey && status.hasDatabaseId) {
       const attachmentDbName = config.attachmentDatabaseName || config.databaseName || 'Selected';
-      const filesPropertyName = 'Attachments';
+      const filesPropertyName = config.filesPropertyName || 'Attachments';
+      const filesPropertyType = config.filesPropertyType === 'url' ? 'URL' : 'Files';
       const useSeparateDb = config.attachmentUseSeparateDatabase === true;
 
       const attachmentToggle = CardService.newSelectionInput()
@@ -311,6 +341,25 @@ class CardFactory {
         );
         card.addSection(attachmentsSection);
       } else {
+        try {
+          const databases = this._container.resolve('notionService').listDatabases() || [];
+          const selection = CardService.newSelectionInput()
+            .setType(CardService.SelectionInputType.DROPDOWN)
+            .setFieldName('attachment_database_id')
+            .setTitle('Choose Attachment Database');
+          selection.addItem('-- Select database --', '', !config.attachmentDatabaseId);
+          databases.forEach(db => {
+            const isSelected = db.id === config.attachmentDatabaseId;
+            selection.addItem(db.name, db.id, isSelected);
+          });
+          attachmentsSection.addWidget(selection);
+        } catch (e) {
+          attachmentsSection.addWidget(
+            CardService.newTextParagraph()
+              .setText('<i>Unable to load databases. Check your Notion connection.</i>')
+          );
+        }
+
         attachmentsSection.addWidget(
           CardService.newTextParagraph()
             .setText(`Attachment DB: <b>${attachmentDbName}</b>`)
@@ -323,7 +372,18 @@ class CardFactory {
         );
         attachmentsSection.addWidget(
           CardService.newTextParagraph()
-            .setText(`Files Property: <b>${filesPropertyName}</b>`)
+            .setText(`Files Property: <b>${filesPropertyName}</b> (${filesPropertyType})`)
+        );
+
+        attachmentsSection.addWidget(
+          CardService.newButtonSet()
+            .addButton(
+              CardService.newTextButton()
+                .setText('💾 Save Attachment Settings')
+                .setOnClickAction(
+                  CardService.newAction().setFunctionName('saveAttachmentSettings')
+                )
+            )
         );
 
         attachmentsSection.addWidget(
@@ -428,6 +488,14 @@ class CardFactory {
                 .setOnClickAction(
                   CardService.newAction()
                     .setFunctionName('onG2NGmailMessage')
+                )
+            )
+            .addButton(
+              CardService.newTextButton()
+                .setText('🔍 Review Mappings')
+                .setOnClickAction(
+                  CardService.newAction()
+                    .setFunctionName('showReviewMappings')
                 )
             )
         )

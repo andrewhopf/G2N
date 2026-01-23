@@ -25,11 +25,21 @@ class SettingsCard extends BaseCardRenderer {
             .setTitle('Notion API Key')
             .setValue(config.apiKey || '')
             .setHint("Enter your Notion API key (starts with 'secret_')")
+        )
+        .addWidget(
+          this.textParagraph(
+            '<font color="#5F6368">Web import: set <b>G2N_HMAC_KEY_V1</b> in Script Properties. <b>G2N_HMAC_KEY_V0</b> is the previous key kept temporarily during rotation so older links still work.</font>'
+          )
+        )
+        .addWidget(
+          this.textParagraph(
+            '<font color="#5F6368">Admin controls are hidden unless your email is listed in <b>G2N_ADMIN_EMAILS</b> (Script Properties).</font>'
+          )
         );
 
       // === SECTION 2: Database ===
       const dbSection = CardService.newCardSection()
-        .setHeader('🗄️ Database')
+        .setHeader('📧 Gmail to Notion Database')
         .addWidget(
           this.textParagraph(
             status.hasDatabaseId
@@ -38,11 +48,41 @@ class SettingsCard extends BaseCardRenderer {
           )
         )
         .addWidget(
-          this.buttonSet(
-            this.newButton('🗄️ Select Database', 'showDatabaseSelection'),
-            this.newButton('🔄 Test Connection', 'testNotionConnection')
+          this.textParagraph(
+            '<font color="#5F6368"><i>This is the Notion database where emails will be saved.</i></font>'
           )
         );
+
+      if (status.hasApiKey) {
+        try {
+          const databases = this.container.resolve('notionService').listDatabases() || [];
+          const selection = CardService.newSelectionInput()
+            .setType(CardService.SelectionInputType.DROPDOWN)
+            .setFieldName('selected_database')
+            .setTitle('Choose Database');
+          selection.addItem('-- Select database --', '', !config.databaseId);
+          databases.forEach(db => {
+            const isSelected = db.id === config.databaseId;
+            selection.addItem(db.name, db.id, isSelected);
+          });
+          dbSection.addWidget(selection);
+        } catch (e) {
+          dbSection.addWidget(
+            this.textParagraph('<i>Unable to load databases. Check your Notion connection.</i>')
+          );
+        }
+      } else {
+        dbSection.addWidget(
+          this.textParagraph('<i>Enter API key first to select a database.</i>')
+        );
+      }
+
+      dbSection.addWidget(
+        this.buttonSet(
+          this.newButton('💾 Save Database', 'saveDatabaseSelection'),
+          this.newButton('🔄 Test Connection', 'testNotionConnection')
+        )
+      );
 
       // Start building sections array
       const sections = [];
@@ -52,6 +92,55 @@ class SettingsCard extends BaseCardRenderer {
       }
       sections.push(apiSection, dbSection);
 
+      if (typeof isAdminUser_ === 'function' && isAdminUser_()) {
+        const keyStatus = typeof getHmacKeyStatus_ === 'function' ? getHmacKeyStatus_() : {};
+        const rotateState = typeof getRotateConfirmState_ === 'function' ? getRotateConfirmState_() : null;
+        const keySection = CardService.newCardSection()
+          .setHeader('🔐 Web Import Keys');
+
+        const v1Text = keyStatus.hasV1
+          ? `V1: ✅ set (…${keyStatus.v1Suffix || 'set'})`
+          : 'V1: ❌ not set';
+        const v0Text = keyStatus.hasV0
+          ? `V0: ✅ set (…${keyStatus.v0Suffix || 'set'})`
+          : 'V0: ❌ not set';
+
+        keySection.addWidget(this.textParagraph(v1Text));
+        keySection.addWidget(this.textParagraph(v0Text));
+        if (keyStatus.rotatedAt) {
+          keySection.addWidget(this.textParagraph(`Rotated at: ${keyStatus.rotatedAt}`));
+        }
+
+        if (rotateState && rotateState.pending) {
+          keySection.addWidget(this.textParagraph(
+            '<font color="#B45309"><b>Confirm rotation?</b> This will replace V1. Keep V0 for overlap.</font>'
+          ));
+          keySection.addWidget(
+            CardService.newTextInput()
+              .setFieldName('rotate_confirm_text')
+              .setTitle('Type ROTATE to confirm')
+              .setHint('Enter ROTATE to enable the confirm action')
+          );
+          keySection.addWidget(
+            this.buttonSet(
+              this.newButton('✅ Confirm Rotation', 'confirmRotateHmacKeys', {}, { filled: true }),
+              this.newButton('✖ Cancel', 'cancelRotateHmacKeys')
+            )
+          );
+        } else {
+          keySection.addWidget(
+            this.buttonSet(
+              this.newButton('🔄 Rotate Keys', 'requestRotateHmacKeys'),
+              this.newButton('🧹 Clear V0', 'clearHmacKeyV0')
+            )
+          );
+        }
+
+        keySection.addWidget(this.textParagraph(
+          '<font color="#5F6368">V1 is active. V0 is temporary for overlap during rotation.</font>'
+        ));
+        sections.push(keySection);
+      }
       // === SECTION 3: Mappings (if DB selected) ===
       if (status.hasDatabaseId) {
         const mappingsSection = CardService.newCardSection()
@@ -81,7 +170,8 @@ try {
   const hasApiKey = config.apiKey;
   const hasDatabase = config.databaseId;
   const attachmentDbId = config.attachmentDatabaseId || config.databaseId;
-  const filesPropertyName = 'Attachments';
+  const filesPropertyName = config.filesPropertyName || 'Attachments';
+  const filesPropertyType = config.filesPropertyType === 'url' ? 'URL' : 'Files';
 
   // Show status
   if (hasApiKey && hasDatabase) {
@@ -101,6 +191,31 @@ try {
         '<i>Attachment mappings are disabled until this is enabled.</i>'
       ));
     } else {
+      try {
+        const notionService = this.container.resolve('notionService');
+        const databases = notionService.listDatabases() || [];
+        if (databases.length > 0) {
+          const selection = CardService.newSelectionInput()
+            .setType(CardService.SelectionInputType.DROPDOWN)
+            .setFieldName('attachment_database_id')
+            .setTitle('Choose Attachment Database');
+          selection.addItem('-- Select database --', '', !config.attachmentDatabaseId);
+          databases.forEach(db => {
+            const isSelected = db.id === config.attachmentDatabaseId;
+            selection.addItem(db.name, db.id, isSelected);
+          });
+          attachmentsSection.addWidget(selection);
+        } else {
+          attachmentsSection.addWidget(this.textParagraph(
+            '<i>No Notion databases found.</i>'
+          ));
+        }
+      } catch (e) {
+        attachmentsSection.addWidget(this.textParagraph(
+          '<i>Unable to load databases. Check your Notion connection.</i>'
+        ));
+      }
+
       if (attachmentDbId) {
         attachmentsSection.addWidget(this.textParagraph(
           '<b>Attachment Database:</b> ' + (config.attachmentDatabaseName || config.databaseName || 'Selected')
@@ -108,7 +223,7 @@ try {
       }
       
       attachmentsSection.addWidget(this.textParagraph(
-        '<b>Files Property:</b> ' + filesPropertyName
+        '<b>Files Property:</b> ' + filesPropertyName + ' (' + filesPropertyType + ')'
       ));
 
       const embedEmail = config.attachmentEmbedEmailPage ? 'Email page' : '';
@@ -116,6 +231,9 @@ try {
       const embedTargets = [embedEmail, embedAttachment].filter(Boolean).join(', ');
       attachmentsSection.addWidget(this.textParagraph(
         '<b>Embed in Pages:</b> ' + (embedTargets || 'None')
+      ));
+      attachmentsSection.addWidget(this.buttonSet(
+        this.newButton('💾 Save Attachment Settings', 'saveAttachmentSettings')
       ));
     }
   } else {
@@ -171,6 +289,35 @@ sections.push(attachmentsSection);
           )
         );
       sections.push(actionsSection);
+
+      if (typeof isDevMode_ === 'function' && isDevMode_()) {
+        const diagnostics = CardService.newCardSection()
+          .setHeader('🧪 Diagnostics');
+        const gateStatus = typeof getAdminGateStatus_ === 'function' ? getAdminGateStatus_() : null;
+        const keyStatus = typeof getHmacKeyStatus_ === 'function' ? getHmacKeyStatus_() : {};
+        const v1Status = keyStatus.hasV1 ? 'yes' : 'no';
+        const v0Status = keyStatus.hasV0 ? 'yes' : 'no';
+
+        diagnostics.addWidget(this.textParagraph(
+          'Email resolved: ' + (gateStatus ? gateStatus.email : '(unknown)')
+        ));
+        diagnostics.addWidget(this.textParagraph(
+          'Admin allow-list match: ' + (gateStatus && gateStatus.isAdmin ? 'YES' : 'NO')
+        ));
+        diagnostics.addWidget(this.textParagraph(
+          'DEV_MODE: ' + (gateStatus && gateStatus.devMode ? 'true' : 'false')
+        ));
+        diagnostics.addWidget(this.textParagraph(
+          'HMAC V1 present: ' + v1Status
+        ));
+        diagnostics.addWidget(this.textParagraph(
+          'HMAC V0 present: ' + v0Status
+        ));
+        if (keyStatus.rotatedAt) {
+          diagnostics.addWidget(this.textParagraph('Last rotated: ' + keyStatus.rotatedAt));
+        }
+        sections.push(diagnostics);
+      }
 
       return this.buildCard(header, sections);
 
